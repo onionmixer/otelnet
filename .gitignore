@@ -1,0 +1,36 @@
+# Build artifacts
+build/
+*.o
+*.a
+*.so
+
+# Executable
+otelnet
+
+# Log files
+*.log
+otelnet.log
+
+# Configuration (local)
+otelnet.conf.local
+
+# Editor artifacts
+*.swp
+*.swo
+*~
+.*.swp
+.*.swo
+
+# IDE
+.vscode/
+.idea/
+*.code-workspace
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+
+# Debug
+core
+core.*
+vgcore.*

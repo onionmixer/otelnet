@@ -1,0 +1,126 @@
+  Telnet 관련 파일 목록 및 내용
+
+  1. otherbackends/telnet.c (1,107줄)
+
+  메인 Telnet 클라이언트 백엔드 구현
+
+  주요 기능:
+  - Telnet 프로토콜 명령어 정의 (IAC, DO, DONT, WILL, WONT, SB, SE 등)
+  - 50개 이상의 Telnet 옵션 정의 (TELOPTS 매크로)
+    - NAWS (윈도우 크기), TTYPE (터미널 타입), TSPEED (터미널 속도)
+    - ECHO, SGA (Suppress Go Ahead), BINARY
+    - NEW_ENVIRON/OLD_ENVIRON (환경 변수)
+
+  핵심 구조체:
+  - Telnet: 메인 상태 구조체 (otherbackends/telnet.c:172-204)
+    - 소켓 연결 상태
+    - 옵션 협상 상태 배열
+    - 서브네고시에이션 버퍼
+    - 상태 머신 (TOP_LEVEL, SEENIAC, SEENWILL/WONT/DO/DONT, SEENSB 등)
+
+  주요 함수:
+  - do_telnet_read(): 네트워크에서 받은 데이터 파싱 (otherbackends/telnet.c:498)
+  - proc_rec_opt(): 옵션 협상 처리 (otherbackends/telnet.c:307)
+  - process_subneg(): 서브네고시에이션 처리 (otherbackends/telnet.c:359)
+    - TSPEED, TTYPE, ENVIRON 옵션 처리
+  - telnet_send(): 데이터 전송, IAC/CR 이스케이핑 (otherbackends/telnet.c:851)
+  - telnet_size(): NAWS 옵션으로 윈도우 크기 전송 (otherbackends/telnet.c:893)
+  - telnet_special(): 특수 명령 전송 (AYT, BRK, SYNCH 등) (otherbackends/telnet.c:926)
+
+  상태 머신:
+  - IAC 시퀀스 파싱
+  - 옵션 협상 (WILL/WONT/DO/DONT)
+  - 서브네고시에이션 처리
+  - CR/LF 처리
+
+  ---
+  2. proxy/telnet.c (370줄)
+
+  Telnet 프록시 협상 구현
+
+  주요 기능:
+  - Ad-hoc Telnet 프록시를 통한 연결 (표준화되지 않은 프록시)
+  - 프록시 명령어 포맷팅 및 변수 치환
+
+  핵심 함수:
+  - format_telnet_command(): 프록시 명령 생성 (proxy/telnet.c:15)
+    - 이스케이프 시퀀스 처리 (\\, \%, \r, \n, \t, \x??)
+    - 변수 치환 (%host, %port, %user, %pass, %proxyhost, %proxyport)
+
+  구조체:
+  - TelnetProxyNegotiator: 프록시 협상 상태 (proxy/telnet.c:190-197)
+
+  작동 방식:
+  - 사용자/비밀번호 프롬프트 처리
+  - 프록시 명령 전송
+  - 오류 확인 없이 즉시 성공 보고 (비표준 프록시이므로)
+
+  ---
+  3. contrib/cygtermd/telnet.c (566줄)
+
+  Cygwin 터미널 데몬용 Telnet 서버 구현
+
+  주요 기능:
+  - Telnet 서버 측 구현 (클라이언트의 반대)
+  - PTY와 네트워크 사이 데이터 중계
+
+  핵심 구조체:
+  - Telnet: 서버 상태 구조체 (contrib/cygtermd/telnet.c:169-194)
+    - 클라이언트 옵션 협상 상태 추적
+    - 쉘 시작 준비 상태 관리
+
+  주요 함수:
+  - telnet_from_net(): 네트워크에서 받은 데이터 파싱 후 PTY로 전달 (contrib/cygtermd/telnet.c:397)
+  - telnet_from_pty(): PTY에서 받은 데이터를 네트워크로 전송 (contrib/cygtermd/telnet.c:535)
+  - process_subneg(): 서브네고시에이션 처리 (contrib/cygtermd/telnet.c:320)
+    - ENVIRON: 환경 변수 수집
+    - TTYPE: 터미널 타입 수집
+    - NAWS: 윈도우 크기 변경
+  - telnet_shell_ok(): 쉘 시작 준비 확인 (contrib/cygtermd/telnet.c:560)
+
+  차이점:
+  - 클라이언트 옵션을 서버가 요청 (DO/WILL 역할 반대)
+  - ENVIRON/TTYPE 정보를 수집하여 쉘 환경 설정에 사용
+
+  ---
+  4. contrib/cygtermd/telnet.h (42줄)
+
+  Cygterm Telnet 헤더 파일
+
+  정의:
+  - struct shell_data: 쉘 시작에 필요한 데이터
+    - 환경 변수 배열
+    - 터미널 타입
+  - 함수 프로토타입
+
+  ---
+  Telnet 프로토콜 처리 구조
+
+  옵션 협상 메커니즘
+
+  클라이언트 → WILL/WONT → 서버
+  서버 → DO/DONT → 클라이언트
+
+  상태별 처리 흐름
+
+  1. TOP_LEVEL: 일반 데이터 처리
+  2. SEENIAC: IAC 명령 감지
+  3. SEENWILL/WONT/DO/DONT: 옵션 협상
+  4. SEENSB → SUBNEGOT → SUBNEG_IAC: 서브네고시에이션
+  5. SEENCR: CR 처리 (바이너리 모드 고려)
+
+  지원 옵션
+
+  - NAWS: 터미널 크기 협상
+  - TTYPE: 터미널 타입 전송
+  - ECHO/SGA: 에코 및 라인 편집 제어
+  - BINARY: 바이너리 전송 모드
+  - ENVIRON: 환경 변수 전달
+
+● 분석을 완료했습니다. PuTTY의 Telnet 프로토콜 처리는 크게 3가지 구현으로 나뉘어져 있습니다:
+
+  1. 메인 클라이언트 (otherbackends/telnet.c): RFC 854 Telnet 프로토콜의 완전한 구현
+  2. 프록시 협상 (proxy/telnet.c): 비표준 Telnet 기반 프록시 지원
+  3. 서버 구현 (contrib/cygtermd/telnet.c): Cygwin 환경용 간단한 Telnet 서버
+
+  모든 구현은 공통적으로 상태 머신 기반으로 IAC 시퀀스를 파싱하고, 옵션 협상 프로토콜을 처리합니다.
