@@ -108,6 +108,10 @@ typedef struct {
     char console_buffer[LINE_BUFFER_SIZE];
     size_t console_buffer_len;
 
+    /* Line mode input buffer (for redisplay after server output) */
+    char line_buffer[LINE_BUFFER_SIZE];
+    size_t line_buffer_len;
+
     /* Configuration */
     otelnet_config_t config;
 

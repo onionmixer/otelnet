@@ -125,6 +125,7 @@ void otelnet_init(otelnet_ctx_t *ctx)
     ctx->running = true;
     ctx->termios_saved = false;
     ctx->console_buffer_len = 0;
+    ctx->line_buffer_len = 0;
     ctx->bytes_sent = 0;
     ctx->bytes_received = 0;
     ctx->connection_start_time = 0;
@@ -1062,9 +1063,29 @@ int otelnet_process_stdin(otelnet_ctx_t *ctx)
         if (telnet_is_connected(&ctx->telnet)) {
             /* Local echo if server doesn't echo */
             bool need_local_echo = !ctx->telnet.echo_remote;
+            bool is_linemode = telnet_is_linemode(&ctx->telnet);
+
+            /* Update line buffer in line mode for redisplay support */
+            if (is_linemode) {
+                for (ssize_t i = 0; i < n; i++) {
+                    unsigned char c = buf[i];
+                    if (c == '\r' || c == '\n') {
+                        /* End of line - clear buffer */
+                        ctx->line_buffer_len = 0;
+                    } else if (c == 0x7F || c == 0x08) {
+                        /* Backspace/Delete - remove last character */
+                        if (ctx->line_buffer_len > 0) {
+                            ctx->line_buffer_len--;
+                        }
+                    } else if (c >= 0x20 && ctx->line_buffer_len < sizeof(ctx->line_buffer) - 1) {
+                        /* Add character to buffer */
+                        ctx->line_buffer[ctx->line_buffer_len++] = c;
+                    }
+                }
+            }
 
             if (need_local_echo) {
-                /* Echo input locally */
+                /* Echo input locally - support multibyte characters */
                 for (ssize_t i = 0; i < n; i++) {
                     unsigned char c = buf[i];
                     ssize_t written;
@@ -1076,12 +1097,12 @@ int otelnet_process_stdin(otelnet_ctx_t *ctx)
                         /* Backspace/Delete - echo backspace sequence */
                         written = write(STDOUT_FILENO, "\b \b", 3);
                         (void)written; /* Ignore write errors for echo */
-                    } else if (c >= 0x20 && c < 0x7F) {
-                        /* Printable character */
+                    } else if (c >= 0x20) {
+                        /* Printable ASCII character or multibyte sequence byte (0x80-0xFF) */
                         written = write(STDOUT_FILENO, &c, 1);
                         (void)written; /* Ignore write errors for echo */
                     }
-                    /* Non-printable characters not echoed */
+                    /* Only control characters (< 0x20) not echoed */
                 }
             }
 
@@ -1191,11 +1212,77 @@ int otelnet_process_telnet(otelnet_ctx_t *ctx)
         /* Log received data */
         otelnet_log_data(ctx, "receive", output_buf, output_len);
 
-        /* Write to stdout */
-        ssize_t written = write(STDOUT_FILENO, output_buf, output_len);
-        if (written < 0) {
-            MB_LOG_ERROR("Failed to write to stdout: %s", strerror(errno));
-            return ERROR_IO;
+        /* In line mode, check if we need to preserve current input line */
+        bool is_linemode = telnet_is_linemode(&ctx->telnet);
+
+        /* Check if server output ends with a prompt (ends with "> " or ">> ")
+         * If it does, don't redisplay input as server will handle it */
+        bool ends_with_prompt = false;
+        if (is_linemode && output_len >= 2) {
+            if (output_buf[output_len - 1] == ' ' && output_buf[output_len - 2] == '>') {
+                ends_with_prompt = true;
+            }
+        }
+
+        bool need_redisplay = is_linemode && ctx->line_buffer_len > 0 && !ends_with_prompt;
+
+        if (need_redisplay) {
+            /* Clear current input line by backspacing */
+            for (size_t i = 0; i < ctx->line_buffer_len; i++) {
+                ssize_t ret = write(STDOUT_FILENO, "\b \b", 3);
+                (void)ret; /* Ignore write errors for backspace */
+            }
+        }
+
+        /* Write server output to stdout with LF -> CRLF translation for line mode */
+        if (is_linemode) {
+            /* Line mode: translate LF to CRLF for proper display */
+            unsigned char translated_buf[BUFFER_SIZE * 2];
+            size_t translated_len = 0;
+
+            for (size_t i = 0; i < output_len && translated_len < sizeof(translated_buf) - 1; i++) {
+                if (output_buf[i] == '\n') {
+                    /* LF -> CRLF */
+                    translated_buf[translated_len++] = '\r';
+                    translated_buf[translated_len++] = '\n';
+                } else if (output_buf[i] == '\r') {
+                    /* Standalone CR: check if next byte is not LF */
+                    if (i + 1 < output_len && output_buf[i + 1] == '\n') {
+                        /* CR LF sequence - keep as is */
+                        translated_buf[translated_len++] = '\r';
+                    } else {
+                        /* Standalone CR - convert to CRLF for proper line break */
+                        translated_buf[translated_len++] = '\r';
+                        translated_buf[translated_len++] = '\n';
+                    }
+                } else {
+                    translated_buf[translated_len++] = output_buf[i];
+                }
+            }
+
+            ssize_t written = write(STDOUT_FILENO, translated_buf, translated_len);
+            if (written < 0) {
+                MB_LOG_ERROR("Failed to write to stdout: %s", strerror(errno));
+                return ERROR_IO;
+            }
+        } else {
+            /* Character mode: output as-is (server handles CRLF) */
+            ssize_t written = write(STDOUT_FILENO, output_buf, output_len);
+            if (written < 0) {
+                MB_LOG_ERROR("Failed to write to stdout: %s", strerror(errno));
+                return ERROR_IO;
+            }
+        }
+
+        /* Redisplay user's input line if it was cleared and not ending with prompt */
+        if (need_redisplay) {
+            ssize_t written = write(STDOUT_FILENO, ctx->line_buffer, ctx->line_buffer_len);
+            (void)written; /* Ignore errors for redisplay */
+        }
+
+        /* If server sent a prompt, clear our line buffer as user will start new input */
+        if (is_linemode && ends_with_prompt) {
+            ctx->line_buffer_len = 0;
         }
     }
 

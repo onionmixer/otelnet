@@ -27,6 +27,9 @@ make debug
 # or
 make DEBUG=1
 
+# Static build (statically linked binary)
+make static
+
 # Install system-wide (requires root)
 sudo make install
 

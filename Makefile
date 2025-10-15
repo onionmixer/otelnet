@@ -13,12 +13,14 @@ INC_DIR = include
 BUILD_DIR = build
 OBJ_DIR = $(BUILD_DIR)/obj
 
-# Target executable
+# Target executables
 TARGET = $(BUILD_DIR)/otelnet
+TARGET_STATIC = $(BUILD_DIR)/otelnet_static
 
 # Source files
 SOURCES = $(SRC_DIR)/otelnet.c $(SRC_DIR)/telnet.c
 OBJECTS = $(patsubst $(SRC_DIR)/%.c,$(OBJ_DIR)/%.o,$(SOURCES))
+OBJECTS_STATIC = $(patsubst $(SRC_DIR)/%.c,$(OBJ_DIR)/%-static.o,$(SOURCES))
 
 # Header dependencies
 INCLUDES = -I$(INC_DIR)
@@ -51,6 +53,11 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/%.c | $(OBJ_DIR)
 	@echo "Compiling $<..."
 	$(CC) $(CFLAGS) $(INCLUDES) -c $< -o $@
 
+# Compile source files for static build
+$(OBJ_DIR)/%-static.o: $(SRC_DIR)/%.c | $(OBJ_DIR)
+	@echo "Compiling $< (static)..."
+	$(CC) $(CFLAGS) $(INCLUDES) -c $< -o $@
+
 # Clean build artifacts
 .PHONY: clean
 clean:
@@ -79,6 +86,16 @@ uninstall:
 debug:
 	$(MAKE) DEBUG=1
 
+# Static build
+.PHONY: static
+static: $(TARGET_STATIC)
+
+# Link otelnet_static
+$(TARGET_STATIC): $(BUILD_DIR) $(OBJ_DIR) $(OBJECTS_STATIC)
+	@echo "Linking $(TARGET_STATIC) (static)..."
+	$(CC) $(LDFLAGS) -static $(OBJECTS_STATIC) $(LIBS) -o $(TARGET_STATIC)
+	@echo "Build complete: $(TARGET_STATIC)"
+
 # Show variables (for debugging Makefile)
 .PHONY: show
 show:
@@ -97,6 +114,7 @@ help:
 	@echo "  all       - Build otelnet (default)"
 	@echo "  clean     - Remove build artifacts"
 	@echo "  debug     - Build with debug symbols"
+	@echo "  static    - Build statically linked otelnet_static"
 	@echo "  install   - Install to system (requires root)"
 	@echo "  uninstall - Remove from system (requires root)"
 	@echo "  show      - Show Makefile variables"
