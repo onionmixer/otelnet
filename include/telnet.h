@@ -311,4 +311,58 @@ bool telnet_is_linemode(telnet_t *tn);
  */
 bool telnet_is_binary_mode(telnet_t *tn);
 
+/**
+ * Print current telnet mode and binary mode state (DEBUG only)
+ * Logs current char/line mode and binary transmission status
+ * @param tn Telnet structure
+ * @param prefix Message prefix (e.g., "Before transfer", "After transfer")
+ */
+void telnet_debug_print_mode(telnet_t *tn, const char *prefix);
+
+/**
+ * Save current telnet protocol state (for file transfers)
+ * Saves BINARY, ECHO, SGA, and LINEMODE states for later restoration
+ * @param tn Telnet structure
+ * @param saved_binary_local Pointer to save local BINARY state
+ * @param saved_binary_remote Pointer to save remote BINARY state
+ * @param saved_echo_local Pointer to save local ECHO state
+ * @param saved_echo_remote Pointer to save remote ECHO state
+ * @param saved_sga_local Pointer to save local SGA state
+ * @param saved_sga_remote Pointer to save remote SGA state
+ * @param saved_linemode_active Pointer to save LINEMODE active state
+ * @return SUCCESS on success, error code on failure
+ */
+int telnet_save_state(telnet_t *tn,
+                      bool *saved_binary_local, bool *saved_binary_remote,
+                      bool *saved_echo_local, bool *saved_echo_remote,
+                      bool *saved_sga_local, bool *saved_sga_remote,
+                      bool *saved_linemode_active);
+
+/**
+ * Request BINARY mode (for file transfers)
+ * Enables 8-bit clean transmission by negotiating BINARY mode
+ * @param tn Telnet structure
+ * @return SUCCESS on success, error code on failure
+ */
+int telnet_request_binary_mode(telnet_t *tn);
+
+/**
+ * Restore telnet protocol state (after file transfers)
+ * Restores BINARY, ECHO, SGA, and LINEMODE states to saved values
+ * @param tn Telnet structure
+ * @param saved_binary_local Original local BINARY state
+ * @param saved_binary_remote Original remote BINARY state
+ * @param saved_echo_local Original local ECHO state
+ * @param saved_echo_remote Original remote ECHO state
+ * @param saved_sga_local Original local SGA state
+ * @param saved_sga_remote Original remote SGA state
+ * @param saved_linemode_active Original LINEMODE active state
+ * @return SUCCESS on success, error code on failure
+ */
+int telnet_restore_state(telnet_t *tn,
+                        bool saved_binary_local, bool saved_binary_remote,
+                        bool saved_echo_local, bool saved_echo_remote,
+                        bool saved_sga_local, bool saved_sga_remote,
+                        bool saved_linemode_active);
+
 #endif /* OTELNET_TELNET_H */

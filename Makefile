@@ -10,15 +10,14 @@ LIBS =
 # Directories
 SRC_DIR = src
 INC_DIR = include
-BUILD_DIR = build
-OBJ_DIR = $(BUILD_DIR)/obj
+OBJ_DIR = obj
 
 # Target executables
-TARGET = $(BUILD_DIR)/otelnet
-TARGET_STATIC = $(BUILD_DIR)/otelnet_static
+TARGET = otelnet
+TARGET_STATIC = otelnet_static
 
 # Source files
-SOURCES = $(SRC_DIR)/otelnet.c $(SRC_DIR)/telnet.c
+SOURCES = $(SRC_DIR)/otelnet.c $(SRC_DIR)/telnet.c $(SRC_DIR)/transfer.c
 OBJECTS = $(patsubst $(SRC_DIR)/%.c,$(OBJ_DIR)/%.o,$(SOURCES))
 OBJECTS_STATIC = $(patsubst $(SRC_DIR)/%.c,$(OBJ_DIR)/%-static.o,$(SOURCES))
 
@@ -39,11 +38,8 @@ all: $(TARGET)
 $(OBJ_DIR):
 	@mkdir -p $(OBJ_DIR)
 
-$(BUILD_DIR):
-	@mkdir -p $(BUILD_DIR)
-
 # Link otelnet
-$(TARGET): $(BUILD_DIR) $(OBJ_DIR) $(OBJECTS)
+$(TARGET): $(OBJ_DIR) $(OBJECTS)
 	@echo "Linking $(TARGET)..."
 	$(CC) $(LDFLAGS) $(OBJECTS) $(LIBS) -o $(TARGET)
 	@echo "Build complete: $(TARGET)"
@@ -62,7 +58,7 @@ $(OBJ_DIR)/%-static.o: $(SRC_DIR)/%.c | $(OBJ_DIR)
 .PHONY: clean
 clean:
 	@echo "Cleaning build artifacts..."
-	@rm -rf $(BUILD_DIR)
+	@rm -rf $(OBJ_DIR) $(TARGET) $(TARGET_STATIC)
 	@echo "Clean complete"
 
 # Install (requires root)
@@ -91,7 +87,7 @@ debug:
 static: $(TARGET_STATIC)
 
 # Link otelnet_static
-$(TARGET_STATIC): $(BUILD_DIR) $(OBJ_DIR) $(OBJECTS_STATIC)
+$(TARGET_STATIC): $(OBJ_DIR) $(OBJECTS_STATIC)
 	@echo "Linking $(TARGET_STATIC) (static)..."
 	$(CC) $(LDFLAGS) -static $(OBJECTS_STATIC) $(LIBS) -o $(TARGET_STATIC)
 	@echo "Build complete: $(TARGET_STATIC)"

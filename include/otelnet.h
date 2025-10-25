@@ -30,6 +30,9 @@
 /* Telnet protocol (standalone header) */
 #include "telnet.h"
 
+/* File transfer management */
+#include "transfer.h"
+
 /* Constants from common.h */
 #define BUFFER_SIZE         4096
 #define SMALL_BUFFER_SIZE   256
@@ -80,16 +83,18 @@
 /* otelnet operation modes */
 typedef enum {
     OTELNET_MODE_CLIENT,        /* Normal telnet client mode */
-    OTELNET_MODE_CONSOLE        /* Console command mode (Ctrl+M pressed) */
+    OTELNET_MODE_CONSOLE,       /* Console command mode (Ctrl+] pressed) */
+    OTELNET_MODE_TRANSFER       /* File transfer mode */
 } otelnet_mode_t;
 
 /* Configuration structure */
 typedef struct {
-    char kermit_path[BUFFER_SIZE];
-    char send_zmodem_path[BUFFER_SIZE];
-    char receive_zmodem_path[BUFFER_SIZE];
+    /* Session logging */
     bool log_enabled;
     char log_file[BUFFER_SIZE];
+
+    /* Transfer configuration (delegated to transfer module) */
+    transfer_config_t transfer;
 } otelnet_config_t;
 
 /* Main otelnet context */
@@ -125,6 +130,14 @@ typedef struct {
     uint64_t bytes_sent;
     uint64_t bytes_received;
     time_t connection_start_time;
+
+    /* Transfer state */
+    transfer_state_t transfer;
+
+    /* Protocol auto-detection */
+    zmodem_detector_t zmodem_detector;
+    xmodem_detector_t xmodem_detector;
+    ymodem_detector_t ymodem_detector;
 } otelnet_ctx_t;
 
 /* Function prototypes */

@@ -1,0 +1,300 @@
+# otelnet Configuration File
+# Example configuration with all available options
+
+# ============================================================
+# External Program Paths
+# ============================================================
+
+# Kermit file transfer program
+KERMIT=kermit
+
+# ZMODEM send program (sz from lrzsz package)
+#
+# RECOMMENDED: Use lrzsz-lite for better telnet socket compatibility
+# lrzsz-lite has PTY checks removed, enabling direct pipe connections
+# Standard lrzsz may require 'script' command wrapper for PTY emulation
+#
+# Option 1: lrzsz-lite (PTY-free, recommended for otelnet)
+SEND_ZMODEM=/mnt/USERS/onion/DATA_ORIGN/Workspace/lrzsz-lite/bin/lsz
+#
+# Option 2: Standard lrzsz (may require PTY emulation)
+#SEND_ZMODEM=/usr/bin/sz
+#
+# Option 3: Search in PATH
+#SEND_ZMODEM=sz
+
+# ZMODEM receive program (rz from lrzsz package)
+#
+# Option 1: lrzsz-lite (PTY-free, recommended for otelnet)
+RECEIVE_ZMODEM=/mnt/USERS/onion/DATA_ORIGN/Workspace/lrzsz-lite/bin/lrz
+#
+# Option 2: Standard lrzsz (may require PTY emulation)
+#RECEIVE_ZMODEM=/usr/bin/rz
+#
+# Option 3: Search in PATH
+#RECEIVE_ZMODEM=rz
+
+# ============================================================
+# Session Logging
+# ============================================================
+
+# Enable session logging (1=yes, 0=no, true/false, yes/no)
+LOG=0
+
+# Session log file path (hex+ASCII dump format)
+LOG_FILE=otelnet.log
+
+# ============================================================
+# File Transfer Auto-Detection
+# ============================================================
+
+# ZMODEM Auto-Detection
+# Enable automatic ZMODEM transfer detection
+# When enabled, otelnet will automatically start rz when remote sends sz,
+# and prompt for file when remote sends rz
+# Default: 1 (enabled)
+AUTO_ZMODEM=1
+
+# Prompt for filename when auto-detecting ZMODEM upload request
+# If enabled, user will be prompted to enter filename when remote sends 'rz'
+# If disabled, auto-upload will be skipped (user must use manual 'sz' command)
+# Default: 1 (enabled)
+AUTO_ZMODEM_PROMPT=1
+
+# Default download directory for auto-detected transfers
+# Files received via auto-detected ZMODEM will be saved here
+# Default: . (current directory)
+AUTO_ZMODEM_DOWNLOAD_DIR=.
+
+# XMODEM Auto-Detection
+# Enable automatic XMODEM transfer detection
+# When enabled, otelnet will detect repeated NAK or 'C' characters
+# from remote and prompt to send file via XMODEM
+# Default: 1 (enabled)
+AUTO_XMODEM=1
+
+# Prompt for filename when auto-detecting XMODEM upload request
+# If enabled, user will be prompted to enter filename when XMODEM trigger detected
+# If disabled, auto-upload will be skipped (user must use manual 'sx' command)
+# Default: 1 (enabled)
+AUTO_XMODEM_PROMPT=1
+
+# YMODEM Auto-Detection
+# Enable automatic YMODEM transfer detection
+# When enabled, otelnet will detect repeated 'C' characters from remote
+# and prompt to send file(s) via YMODEM batch transfer
+# Default: 1 (enabled)
+AUTO_YMODEM=1
+
+# Prompt for filename when auto-detecting YMODEM upload request
+# If enabled, user will be prompted to enter filename(s) when YMODEM trigger detected
+# If disabled, auto-upload will be skipped (user must use manual 'sy' command)
+# Default: 1 (enabled)
+AUTO_YMODEM_PROMPT=1
+
+# ============================================================
+# Transfer Timeouts
+# ============================================================
+
+# Overall transfer timeout in seconds
+# 0 = no timeout (wait indefinitely)
+# Default: 300 (5 minutes)
+TRANSFER_TIMEOUT=300
+
+# Data timeout in seconds (no data received)
+# Currently not fully implemented (reserved for future use)
+# Default: 30
+TRANSFER_DATA_TIMEOUT=30
+
+# ============================================================
+# Transfer Logging
+# ============================================================
+
+# Enable transfer-specific logging
+# Logs transfer start/end events with timestamps and status
+# Default: 0 (disabled)
+TRANSFER_LOG=0
+
+# Transfer log file path
+# Format: timestamp | event | protocol | filename | status
+# Default: otelnet-transfers.log
+TRANSFER_LOG_FILE=otelnet-transfers.log
+
+# Keep partial files on transfer error
+# When enabled, incomplete files from failed transfers are kept
+# When disabled, partial files are deleted on error
+# Default: 1 (keep partial files)
+TRANSFER_KEEP_PARTIAL=1
+
+# ============================================================
+# Usage Examples
+# ============================================================
+
+# Example 1: Disable all auto-detection
+# AUTO_ZMODEM=0
+
+# Example 2: Enable transfer logging for debugging
+# TRANSFER_LOG=1
+# LOG=1
+
+# Example 3: Set longer timeout for large files
+# TRANSFER_TIMEOUT=600
+
+# Example 4: Use full paths for external programs
+# KERMIT=/usr/bin/kermit
+# SEND_ZMODEM=/usr/bin/sz
+# RECEIVE_ZMODEM=/usr/bin/rz
+
+# Example 5: Save downloads to specific directory
+# AUTO_ZMODEM_DOWNLOAD_DIR=/home/user/downloads
+
+# ============================================================
+# Installation Notes
+# ============================================================
+
+# lrzsz-lite (PTY-free version) - RECOMMENDED
+#
+# lrzsz-lite is a patched version of lrzsz with PTY/TTY checks removed,
+# making it ideal for use with otelnet's pipe-based communication.
+#
+# Test results (from lrzsz-lite/TEST.md):
+#   - TCP socket transfer: SUCCESS
+#   - MD5 checksum match: 100%
+#   - All protocols work: ZMODEM, YMODEM, XMODEM
+#   - Non-TTY environment: VERIFIED
+#
+# Build from source:
+#   git clone https://github.com/UweOhse/lrzsz.git lrzsz-lite
+#   cd lrzsz-lite
+#   # Apply PTY check removal patch (see lrzsz-lite/TEST.md)
+#   ./configure
+#   make
+#   # Binaries will be in src/: lsz (send) and lrz (receive)
+
+# Standard lrzsz Installation:
+#
+# Ubuntu/Debian:
+#   sudo apt-get install lrzsz
+#
+# Fedora/RHEL:
+#   sudo dnf install lrzsz
+#
+# macOS:
+#   brew install lrzsz
+#
+# Note: Standard lrzsz may experience issues with otelnet due to
+# PTY expectations. Use lrzsz-lite for best results.
+
+# Kermit Installation:
+#
+# Ubuntu/Debian:
+#   sudo apt-get install ckermit
+#
+# Fedora/RHEL:
+#   sudo dnf install ckermit
+#
+# macOS:
+#   brew install ckermit
+
+# ============================================================
+# Protocol Support Matrix
+# ============================================================
+
+# ZMODEM (sz/rz):
+#   - Speed: FASTEST
+#   - Block size: Variable (streaming)
+#   - Error checking: CRC-32
+#   - Resume support: YES (crash recovery)
+#   - Batch transfer: YES (multiple files)
+#   - File info: YES (name, size, date)
+#   - Best for: Large files, unreliable connections
+#   Commands: sz <file1> [file2...], rz
+
+# YMODEM (sy/ry):
+#   - Speed: FAST
+#   - Block size: 1024 bytes
+#   - Error checking: CRC-16
+#   - Resume support: NO
+#   - Batch transfer: YES (multiple files)
+#   - File info: YES (name, size)
+#   - Best for: Batch transfers of medium files
+#   Commands: sy <file1> [file2...], ry
+
+# XMODEM (sx/rx):
+#   - Speed: SLOW
+#   - Block size: 128 bytes
+#   - Error checking: Checksum or CRC-16
+#   - Resume support: NO
+#   - Batch transfer: NO (single file only)
+#   - File info: NO (manual filename required)
+#   - Best for: Small files, maximum compatibility
+#   Commands: sx <file>, rx <filename>
+#   Note: XMODEM cannot transfer empty (0-byte) files
+
+# Kermit:
+#   - Speed: MODERATE
+#   - Block size: Variable (negotiated)
+#   - Error checking: CRC
+#   - Resume support: YES
+#   - Batch transfer: YES
+#   - File info: YES (extensive metadata)
+#   - Best for: Robust transfers, scripting
+#   Commands: kermit, skermit <file>, rkermit
+
+# ============================================================
+# Performance Tips
+# ============================================================
+
+# 1. Use lrzsz-lite instead of standard lrzsz
+#    - Eliminates 'script' wrapper overhead (~33% faster)
+#    - Direct pipe connection (no PTY emulation)
+#    - More reliable exit codes
+#
+# 2. Choose the right protocol:
+#    - Large files (>1MB): ZMODEM (fastest, resume support)
+#    - Multiple files: YMODEM or ZMODEM (batch transfer)
+#    - Maximum compatibility: XMODEM (slowest but universal)
+#
+# 3. Disable logging when not debugging:
+#    - Set LOG=0 to reduce disk I/O overhead
+#
+# 4. Ensure sufficient disk space:
+#    - Check free space before receiving large files
+#    - Use TRANSFER_KEEP_PARTIAL=0 to auto-delete failed transfers
+#
+# 5. Network considerations:
+#    - Use ZMODEM for slow/unreliable connections (error recovery)
+#    - Increase TRANSFER_TIMEOUT for very large files
+
+# ============================================================
+# Troubleshooting
+# ============================================================
+
+# Problem: "Program not found in PATH"
+# Solution: Use absolute paths (e.g., /usr/bin/sz) or verify PATH
+
+# Problem: Transfer hangs or times out
+# Solution 1: Use lrzsz-lite instead of standard lrzsz
+# Solution 2: Increase TRANSFER_TIMEOUT value
+# Solution 3: Check LOG_FILE for protocol errors or IAC issues
+
+# Problem: Corrupted files (MD5 mismatch)
+# Solution 1: Enable session logging (LOG=1) to diagnose
+# Solution 2: Verify telnet BINARY mode is negotiated (check logs)
+# Solution 3: Ensure both ends use compatible sz/rz versions
+
+# Problem: "Permission denied" or "File not found"
+# Solution 1: Check file permissions (chmod +x for programs)
+# Solution 2: Verify file paths are correct
+# Solution 3: Use absolute paths instead of relative paths
+
+# Problem: Auto-detection not working
+# Solution 1: Ensure AUTO_ZMODEM=1 (or AUTO_XMODEM/AUTO_YMODEM)
+# Solution 2: Check if remote system is sending correct trigger sequences
+# Solution 3: Enable TRANSFER_LOG=1 to see detection events
+
+# For detailed documentation, see:
+# - CLAUDE.md: Project overview and architecture
+# - MODEMPLAN.md: File transfer implementation plan
+# - lrzsz-lite/TEST.md: Protocol testing and validation
+# - README.md: Quick start guide

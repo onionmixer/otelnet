@@ -993,3 +993,225 @@ bool telnet_is_binary_mode(telnet_t *tn)
 
     return tn->binary_mode;
 }
+
+/**
+ * Print current telnet mode and binary mode state (DEBUG only)
+ */
+void telnet_debug_print_mode(telnet_t *tn, const char *prefix)
+{
+    if (tn == NULL || prefix == NULL) {
+        return;
+    }
+
+#ifdef DEBUG
+    const char *mode_str;
+    const char *binary_str;
+
+    /* Determine telnet mode */
+    if (tn->linemode_active) {
+        mode_str = tn->linemode_edit ? "LINE MODE (LINEMODE option active)"
+                                     : "CHARACTER MODE (LINEMODE option active)";
+    } else if (tn->linemode) {
+        mode_str = "LINE MODE (client echo)";
+    } else {
+        mode_str = "CHARACTER MODE (server echo, SGA enabled)";
+    }
+
+    /* Determine binary mode status */
+    if (tn->binary_local && tn->binary_remote) {
+        binary_str = "BINARY MODE (bidirectional)";
+    } else if (tn->binary_local) {
+        binary_str = "BINARY MODE (local only)";
+    } else if (tn->binary_remote) {
+        binary_str = "BINARY MODE (remote only)";
+    } else {
+        binary_str = "NORMAL MODE (7-bit ASCII)";
+    }
+
+    MB_LOG_DEBUG("%s: Telnet mode: %s, Binary mode: %s", prefix, mode_str, binary_str);
+    MB_LOG_DEBUG("%s: State details - BINARY(L=%d,R=%d) ECHO(L=%d,R=%d) SGA(L=%d,R=%d) LINEMODE=%d",
+                 prefix,
+                 tn->binary_local, tn->binary_remote,
+                 tn->echo_local, tn->echo_remote,
+                 tn->sga_local, tn->sga_remote,
+                 tn->linemode_active);
+#else
+    /* Suppress unused parameter warning in non-DEBUG builds */
+    (void)tn;
+    (void)prefix;
+#endif
+}
+
+/**
+ * Save current telnet protocol state (for file transfers)
+ */
+int telnet_save_state(telnet_t *tn,
+                      bool *saved_binary_local, bool *saved_binary_remote,
+                      bool *saved_echo_local, bool *saved_echo_remote,
+                      bool *saved_sga_local, bool *saved_sga_remote,
+                      bool *saved_linemode_active)
+{
+    if (tn == NULL || saved_binary_local == NULL || saved_binary_remote == NULL ||
+        saved_echo_local == NULL || saved_echo_remote == NULL ||
+        saved_sga_local == NULL || saved_sga_remote == NULL ||
+        saved_linemode_active == NULL) {
+        return ERROR_INVALID_ARG;
+    }
+
+    /* Save all protocol states */
+    *saved_binary_local = tn->binary_local;
+    *saved_binary_remote = tn->binary_remote;
+    *saved_echo_local = tn->echo_local;
+    *saved_echo_remote = tn->echo_remote;
+    *saved_sga_local = tn->sga_local;
+    *saved_sga_remote = tn->sga_remote;
+    *saved_linemode_active = tn->linemode_active;
+
+    MB_LOG_INFO("Saved telnet state: BINARY(L=%d,R=%d) ECHO(L=%d,R=%d) SGA(L=%d,R=%d) LINEMODE=%d",
+                *saved_binary_local, *saved_binary_remote,
+                *saved_echo_local, *saved_echo_remote,
+                *saved_sga_local, *saved_sga_remote,
+                *saved_linemode_active);
+
+    return SUCCESS;
+}
+
+/**
+ * Request BINARY mode for file transfers
+ */
+int telnet_request_binary_mode(telnet_t *tn)
+{
+    if (tn == NULL || tn->fd < 0) {
+        return ERROR_INVALID_ARG;
+    }
+
+    MB_LOG_INFO("Requesting BINARY mode for file transfer");
+
+    /* Request to send binary (WILL BINARY) only if not already enabled */
+    if (!tn->local_options[TELOPT_BINARY]) {
+        telnet_send_negotiate(tn, TELNET_WILL, TELOPT_BINARY);
+        tn->local_options[TELOPT_BINARY] = true;
+        tn->binary_local = true;
+    }
+
+    /* Request remote to send binary (DO BINARY) only if not already enabled */
+    if (!tn->remote_options[TELOPT_BINARY]) {
+        telnet_send_negotiate(tn, TELNET_DO, TELOPT_BINARY);
+        tn->remote_options[TELOPT_BINARY] = true;
+        tn->binary_remote = true;
+    }
+
+    telnet_update_mode(tn);
+
+    return SUCCESS;
+}
+
+/**
+ * Restore telnet protocol state after file transfers
+ * Restores BINARY, ECHO, SGA, and LINEMODE states to original values
+ */
+int telnet_restore_state(telnet_t *tn,
+                        bool saved_binary_local, bool saved_binary_remote,
+                        bool saved_echo_local, bool saved_echo_remote,
+                        bool saved_sga_local, bool saved_sga_remote,
+                        bool saved_linemode_active)
+{
+    if (tn == NULL || tn->fd < 0) {
+        return ERROR_INVALID_ARG;
+    }
+
+    MB_LOG_INFO("Restoring telnet state: BINARY(L=%d,R=%d) ECHO(L=%d,R=%d) SGA(L=%d,R=%d) LINEMODE=%d",
+                saved_binary_local, saved_binary_remote,
+                saved_echo_local, saved_echo_remote,
+                saved_sga_local, saved_sga_remote,
+                saved_linemode_active);
+
+    /* Restore local BINARY mode state */
+    if (saved_binary_local && !tn->binary_local) {
+        MB_LOG_INFO("Re-enabling local BINARY mode");
+        telnet_send_negotiate(tn, TELNET_WILL, TELOPT_BINARY);
+        tn->local_options[TELOPT_BINARY] = true;
+        tn->binary_local = true;
+    } else if (!saved_binary_local && tn->binary_local) {
+        MB_LOG_INFO("Disabling local BINARY mode");
+        telnet_send_negotiate(tn, TELNET_WONT, TELOPT_BINARY);
+        tn->local_options[TELOPT_BINARY] = false;
+        tn->binary_local = false;
+    }
+
+    /* Restore remote BINARY mode state */
+    if (saved_binary_remote && !tn->binary_remote) {
+        MB_LOG_INFO("Re-requesting remote BINARY mode");
+        telnet_send_negotiate(tn, TELNET_DO, TELOPT_BINARY);
+        tn->remote_options[TELOPT_BINARY] = true;
+        tn->binary_remote = true;
+    } else if (!saved_binary_remote && tn->binary_remote) {
+        MB_LOG_INFO("Stopping remote BINARY mode");
+        telnet_send_negotiate(tn, TELNET_DONT, TELOPT_BINARY);
+        tn->remote_options[TELOPT_BINARY] = false;
+        tn->binary_remote = false;
+    }
+
+    /* Restore local ECHO mode state */
+    if (saved_echo_local && !tn->echo_local) {
+        MB_LOG_INFO("Re-enabling local ECHO mode");
+        telnet_send_negotiate(tn, TELNET_WILL, TELOPT_ECHO);
+        tn->local_options[TELOPT_ECHO] = true;
+        tn->echo_local = true;
+    } else if (!saved_echo_local && tn->echo_local) {
+        MB_LOG_INFO("Disabling local ECHO mode");
+        telnet_send_negotiate(tn, TELNET_WONT, TELOPT_ECHO);
+        tn->local_options[TELOPT_ECHO] = false;
+        tn->echo_local = false;
+    }
+
+    /* Restore remote ECHO mode state */
+    if (saved_echo_remote && !tn->echo_remote) {
+        MB_LOG_INFO("Re-requesting remote ECHO mode");
+        telnet_send_negotiate(tn, TELNET_DO, TELOPT_ECHO);
+        tn->remote_options[TELOPT_ECHO] = true;
+        tn->echo_remote = true;
+    } else if (!saved_echo_remote && tn->echo_remote) {
+        MB_LOG_INFO("Stopping remote ECHO mode");
+        telnet_send_negotiate(tn, TELNET_DONT, TELOPT_ECHO);
+        tn->remote_options[TELOPT_ECHO] = false;
+        tn->echo_remote = false;
+    }
+
+    /* Restore local SGA mode state */
+    if (saved_sga_local && !tn->sga_local) {
+        MB_LOG_INFO("Re-enabling local SGA mode");
+        telnet_send_negotiate(tn, TELNET_WILL, TELOPT_SGA);
+        tn->local_options[TELOPT_SGA] = true;
+        tn->sga_local = true;
+    } else if (!saved_sga_local && tn->sga_local) {
+        MB_LOG_INFO("Disabling local SGA mode");
+        telnet_send_negotiate(tn, TELNET_WONT, TELOPT_SGA);
+        tn->local_options[TELOPT_SGA] = false;
+        tn->sga_local = false;
+    }
+
+    /* Restore remote SGA mode state */
+    if (saved_sga_remote && !tn->sga_remote) {
+        MB_LOG_INFO("Re-requesting remote SGA mode");
+        telnet_send_negotiate(tn, TELNET_DO, TELOPT_SGA);
+        tn->remote_options[TELOPT_SGA] = true;
+        tn->sga_remote = true;
+    } else if (!saved_sga_remote && tn->sga_remote) {
+        MB_LOG_INFO("Stopping remote SGA mode");
+        telnet_send_negotiate(tn, TELNET_DONT, TELOPT_SGA);
+        tn->remote_options[TELOPT_SGA] = false;
+        tn->sga_remote = false;
+    }
+
+    /* Restore LINEMODE active state */
+    if (saved_linemode_active != tn->linemode_active) {
+        tn->linemode_active = saved_linemode_active;
+        MB_LOG_INFO("Restored LINEMODE active state: %d", saved_linemode_active);
+    }
+
+    /* Update calculated mode (char/line mode) based on restored states */
+    telnet_update_mode(tn);
+
+    return SUCCESS;
+}

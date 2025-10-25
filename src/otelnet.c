@@ -102,6 +102,8 @@ static int utf8_sequence_length(unsigned char byte)
 static void signal_handler(int signum)
 {
     if (signum == SIGINT || signum == SIGTERM) {
+        /* Request transfer cancellation if active */
+        transfer_request_cancel();
         g_running_local = 0;
     } else if (signum == SIGWINCH) {
         g_winsize_changed = 1;
@@ -130,6 +132,14 @@ void otelnet_init(otelnet_ctx_t *ctx)
     ctx->bytes_received = 0;
     ctx->connection_start_time = 0;
     ctx->log_fp = NULL;
+
+    /* Initialize transfer state */
+    transfer_init(&ctx->transfer);
+
+    /* Initialize protocol detectors */
+    zmodem_detector_init(&ctx->zmodem_detector);
+    xmodem_detector_init(&ctx->xmodem_detector);
+    ymodem_detector_init(&ctx->ymodem_detector);
 }
 
 /**
@@ -147,11 +157,11 @@ int otelnet_load_config(otelnet_ctx_t *ctx, const char *config_file)
     }
 
     /* Set defaults */
-    SAFE_STRNCPY(ctx->config.kermit_path, "kermit", sizeof(ctx->config.kermit_path));
-    SAFE_STRNCPY(ctx->config.send_zmodem_path, "sz", sizeof(ctx->config.send_zmodem_path));
-    SAFE_STRNCPY(ctx->config.receive_zmodem_path, "rz", sizeof(ctx->config.receive_zmodem_path));
     ctx->config.log_enabled = false;
     SAFE_STRNCPY(ctx->config.log_file, "otelnet.log", sizeof(ctx->config.log_file));
+
+    /* Initialize transfer configuration with defaults */
+    transfer_config_init(&ctx->config.transfer);
 
     fp = fopen(config_file, "r");
     if (fp == NULL) {
@@ -182,17 +192,62 @@ int otelnet_load_config(otelnet_ctx_t *ctx, const char *config_file)
 
             /* Parse configuration options */
             if (strcmp(k, "KERMIT") == 0) {
-                SAFE_STRNCPY(ctx->config.kermit_path, v, sizeof(ctx->config.kermit_path));
+                SAFE_STRNCPY(ctx->config.transfer.kermit_path, v,
+                           sizeof(ctx->config.transfer.kermit_path));
             } else if (strcmp(k, "SEND_ZMODEM") == 0) {
-                SAFE_STRNCPY(ctx->config.send_zmodem_path, v, sizeof(ctx->config.send_zmodem_path));
+                SAFE_STRNCPY(ctx->config.transfer.send_zmodem_path, v,
+                           sizeof(ctx->config.transfer.send_zmodem_path));
             } else if (strcmp(k, "RECEIVE_ZMODEM") == 0) {
-                SAFE_STRNCPY(ctx->config.receive_zmodem_path, v, sizeof(ctx->config.receive_zmodem_path));
+                SAFE_STRNCPY(ctx->config.transfer.receive_zmodem_path, v,
+                           sizeof(ctx->config.transfer.receive_zmodem_path));
             } else if (strcmp(k, "LOG") == 0) {
                 ctx->config.log_enabled = (strcmp(v, "1") == 0 ||
                                           strcasecmp(v, "true") == 0 ||
                                           strcasecmp(v, "yes") == 0);
             } else if (strcmp(k, "LOG_FILE") == 0) {
                 SAFE_STRNCPY(ctx->config.log_file, v, sizeof(ctx->config.log_file));
+            } else if (strcmp(k, "AUTO_ZMODEM") == 0) {
+                ctx->config.transfer.auto_zmodem_enabled = (strcmp(v, "1") == 0 ||
+                                                           strcasecmp(v, "true") == 0 ||
+                                                           strcasecmp(v, "yes") == 0);
+            } else if (strcmp(k, "AUTO_ZMODEM_PROMPT") == 0) {
+                ctx->config.transfer.auto_zmodem_prompt = (strcmp(v, "1") == 0 ||
+                                                          strcasecmp(v, "true") == 0 ||
+                                                          strcasecmp(v, "yes") == 0);
+            } else if (strcmp(k, "AUTO_ZMODEM_DOWNLOAD_DIR") == 0) {
+                SAFE_STRNCPY(ctx->config.transfer.auto_zmodem_download_dir, v,
+                           sizeof(ctx->config.transfer.auto_zmodem_download_dir));
+            } else if (strcmp(k, "AUTO_XMODEM") == 0) {
+                ctx->config.transfer.auto_xmodem_enabled = (strcmp(v, "1") == 0 ||
+                                                           strcasecmp(v, "true") == 0 ||
+                                                           strcasecmp(v, "yes") == 0);
+            } else if (strcmp(k, "AUTO_XMODEM_PROMPT") == 0) {
+                ctx->config.transfer.auto_xmodem_prompt = (strcmp(v, "1") == 0 ||
+                                                          strcasecmp(v, "true") == 0 ||
+                                                          strcasecmp(v, "yes") == 0);
+            } else if (strcmp(k, "AUTO_YMODEM") == 0) {
+                ctx->config.transfer.auto_ymodem_enabled = (strcmp(v, "1") == 0 ||
+                                                           strcasecmp(v, "true") == 0 ||
+                                                           strcasecmp(v, "yes") == 0);
+            } else if (strcmp(k, "AUTO_YMODEM_PROMPT") == 0) {
+                ctx->config.transfer.auto_ymodem_prompt = (strcmp(v, "1") == 0 ||
+                                                          strcasecmp(v, "true") == 0 ||
+                                                          strcasecmp(v, "yes") == 0);
+            } else if (strcmp(k, "TRANSFER_TIMEOUT") == 0) {
+                ctx->config.transfer.transfer_timeout_seconds = atoi(v);
+            } else if (strcmp(k, "TRANSFER_DATA_TIMEOUT") == 0) {
+                ctx->config.transfer.transfer_data_timeout_seconds = atoi(v);
+            } else if (strcmp(k, "TRANSFER_LOG") == 0) {
+                ctx->config.transfer.transfer_log_enabled = (strcmp(v, "1") == 0 ||
+                                                            strcasecmp(v, "true") == 0 ||
+                                                            strcasecmp(v, "yes") == 0);
+            } else if (strcmp(k, "TRANSFER_LOG_FILE") == 0) {
+                SAFE_STRNCPY(ctx->config.transfer.transfer_log_file, v,
+                           sizeof(ctx->config.transfer.transfer_log_file));
+            } else if (strcmp(k, "TRANSFER_KEEP_PARTIAL") == 0) {
+                ctx->config.transfer.transfer_keep_partial = (strcmp(v, "1") == 0 ||
+                                                             strcasecmp(v, "true") == 0 ||
+                                                             strcasecmp(v, "yes") == 0);
             }
         }
     }
@@ -200,13 +255,15 @@ int otelnet_load_config(otelnet_ctx_t *ctx, const char *config_file)
     fclose(fp);
 
     MB_LOG_INFO("Configuration loaded from %s", config_file);
-    MB_LOG_INFO("  KERMIT: %s", ctx->config.kermit_path);
-    MB_LOG_INFO("  SEND_ZMODEM: %s", ctx->config.send_zmodem_path);
-    MB_LOG_INFO("  RECEIVE_ZMODEM: %s", ctx->config.receive_zmodem_path);
+    MB_LOG_INFO("  KERMIT: %s", ctx->config.transfer.kermit_path);
+    MB_LOG_INFO("  SEND_ZMODEM: %s", ctx->config.transfer.send_zmodem_path);
+    MB_LOG_INFO("  RECEIVE_ZMODEM: %s", ctx->config.transfer.receive_zmodem_path);
     MB_LOG_INFO("  LOG: %s", ctx->config.log_enabled ? "enabled" : "disabled");
     if (ctx->config.log_enabled) {
         MB_LOG_INFO("  LOG_FILE: %s", ctx->config.log_file);
     }
+    MB_LOG_INFO("  AUTO_ZMODEM: %s", ctx->config.transfer.auto_zmodem_enabled ? "enabled" : "disabled");
+    MB_LOG_INFO("  TRANSFER_TIMEOUT: %d seconds", ctx->config.transfer.transfer_timeout_seconds);
 
     return SUCCESS;
 }
@@ -576,20 +633,25 @@ static bool otelnet_check_program_exists(const char *program)
 
 /**
  * Parse command into program and arguments
+ *
+ * IMPORTANT: parse_buffer will be modified by strsep(), and args[] will point
+ * into this buffer. The caller must ensure parse_buffer remains valid for the
+ * lifetime of the args[] pointers.
  */
-static int otelnet_parse_command_args(const char *input, char *program, size_t prog_size,
+static int otelnet_parse_command_args(const char *input, char *parse_buffer, size_t buffer_size,
+                                      char *program, size_t prog_size,
                                       char **args, int max_args, int *arg_count)
 {
     char *input_copy, *token;
-    char buffer[LINE_BUFFER_SIZE];
     int count = 0;
 
-    if (input == NULL || program == NULL || args == NULL || arg_count == NULL) {
+    if (input == NULL || parse_buffer == NULL || program == NULL ||
+        args == NULL || arg_count == NULL) {
         return ERROR_INVALID_ARG;
     }
 
-    SAFE_STRNCPY(buffer, input, sizeof(buffer));
-    input_copy = buffer;
+    SAFE_STRNCPY(parse_buffer, input, buffer_size);
+    input_copy = parse_buffer;
 
     /* Get program name */
     token = strsep(&input_copy, " \t");
@@ -714,11 +776,639 @@ int otelnet_execute_external_program(otelnet_ctx_t *ctx, const char *program_pat
 }
 
 /**
+ * Execute file transfer using transfer module
+ * Handles mode management, logging, and protocol execution
+ */
+static int otelnet_execute_transfer(otelnet_ctx_t *ctx,
+                                    transfer_protocol_t protocol,
+                                    const char *filename)
+{
+    int telnet_fd;
+    int result;
+    transfer_error_t error;
+
+    if (ctx == NULL) {
+        return ERROR_INVALID_ARG;
+    }
+
+    /* Get telnet socket file descriptor */
+    telnet_fd = telnet_get_fd(&ctx->telnet);
+    if (telnet_fd < 0) {
+        printf("\r\nError: Not connected to telnet server\r\n");
+        return ERROR_CONNECTION;
+    }
+
+    /* Enter transfer mode */
+    if (transfer_enter_mode(&ctx->transfer, protocol) != SUCCESS) {
+        printf("\r\nError: Failed to enter transfer mode\r\n");
+        return ERROR_GENERAL;
+    }
+
+    /* Set filename if provided */
+    if (filename != NULL) {
+        strncpy(ctx->transfer.filename, filename, sizeof(ctx->transfer.filename) - 1);
+        ctx->transfer.filename[sizeof(ctx->transfer.filename) - 1] = '\0';
+    }
+
+    /* Set application mode */
+    ctx->mode = OTELNET_MODE_TRANSFER;
+
+    /* Save current telnet protocol state */
+    telnet_save_state(&ctx->telnet,
+                     &ctx->transfer.saved_binary_local,
+                     &ctx->transfer.saved_binary_remote,
+                     &ctx->transfer.saved_echo_local,
+                     &ctx->transfer.saved_echo_remote,
+                     &ctx->transfer.saved_sga_local,
+                     &ctx->transfer.saved_sga_remote,
+                     &ctx->transfer.saved_linemode_active);
+
+    /* Print telnet mode before transfer (DEBUG only) */
+    telnet_debug_print_mode(&ctx->telnet, "Before file transfer");
+
+    /* Request BINARY mode for 8-bit clean transmission */
+    telnet_request_binary_mode(&ctx->telnet);
+
+    /* Start transfer logging */
+    transfer_log_start(&ctx->config.transfer, &ctx->transfer);
+
+    /* Execute transfer based on protocol */
+    switch (protocol) {
+        case TRANSFER_KERMIT_SEND:
+            result = transfer_execute_kermit_send(&ctx->config.transfer,
+                                                 &ctx->transfer,
+                                                 telnet_fd,
+                                                 filename,
+                                                 &ctx->telnet);
+            break;
+
+        case TRANSFER_KERMIT_RECV:
+            result = transfer_execute_kermit_receive(&ctx->config.transfer,
+                                                    &ctx->transfer,
+                                                    telnet_fd,
+                                                    &ctx->telnet);
+            break;
+
+        case TRANSFER_ZMODEM_SEND:
+        case TRANSFER_XMODEM_SEND:
+        case TRANSFER_YMODEM_SEND:
+        case TRANSFER_ZMODEM_RECV:
+        case TRANSFER_XMODEM_RECV:
+        case TRANSFER_YMODEM_RECV:
+            result = transfer_execute_modem(&ctx->config.transfer,
+                                           &ctx->transfer,
+                                           telnet_fd,
+                                           protocol,
+                                           filename,
+                                           &ctx->telnet);
+            break;
+
+        default:
+            printf("\r\nError: Unsupported protocol type: %d\r\n", protocol);
+            result = ERROR_INVALID_ARG;
+            break;
+    }
+
+    /* Determine error type based on result */
+    if (result == SUCCESS) {
+        error = TRANSFER_ERROR_NONE;
+    } else if (transfer_is_cancel_requested()) {
+        /* User cancelled the transfer */
+        error = TRANSFER_ERROR_USER_CANCEL;
+        printf("\r\n\nTransfer cancelled by user\r\n");
+    } else if (result == ERROR_TIMEOUT) {
+        error = TRANSFER_ERROR_TIMEOUT;
+    } else if (result == ERROR_CONNECTION) {
+        error = TRANSFER_ERROR_NETWORK;
+    } else if (result == ERROR_IO) {
+        error = TRANSFER_ERROR_PERMISSION;
+    } else {
+        error = TRANSFER_ERROR_UNKNOWN;
+    }
+
+    /* End transfer logging */
+    transfer_log_end(&ctx->config.transfer, &ctx->transfer, error);
+
+    /* Exit transfer mode */
+    transfer_exit_mode(&ctx->transfer);
+
+    /* Clear protocol detector buffers to prevent false triggers from leftover data */
+    zmodem_detector_init(&ctx->zmodem_detector);
+    xmodem_detector_init(&ctx->xmodem_detector);
+    ymodem_detector_init(&ctx->ymodem_detector);
+
+    /* Restore telnet protocol state to original values */
+    telnet_restore_state(&ctx->telnet,
+                        ctx->transfer.saved_binary_local,
+                        ctx->transfer.saved_binary_remote,
+                        ctx->transfer.saved_echo_local,
+                        ctx->transfer.saved_echo_remote,
+                        ctx->transfer.saved_sga_local,
+                        ctx->transfer.saved_sga_remote,
+                        ctx->transfer.saved_linemode_active);
+
+    /* Flush socket buffer to prevent stale data from triggering auto-detection
+     * After BINARY mode exit, socket may contain:
+     * - IAC negotiation responses (WONT/DONT BINARY)
+     * - Server text data (timestamps, prompts)
+     * These must be discarded to prevent false ZMODEM/XMODEM/YMODEM triggers */
+    telnet_fd = telnet_get_fd(&ctx->telnet);
+    if (telnet_fd >= 0) {
+        unsigned char flush_buf[BUFFER_SIZE];
+        ssize_t flushed_total = 0;
+        int flush_attempts = 0;
+        const int MAX_FLUSH_ATTEMPTS = 10;
+
+        /* Give server time to send any pending data */
+        usleep(100000);  /* 100ms */
+
+        while (flush_attempts < MAX_FLUSH_ATTEMPTS) {
+            ssize_t n = recv(telnet_fd, flush_buf, sizeof(flush_buf), MSG_DONTWAIT);
+            if (n > 0) {
+                flushed_total += n;
+                MB_LOG_DEBUG("Flushed %zd bytes from socket after transfer (attempt %d)",
+                           n, flush_attempts + 1);
+            } else if (n == 0) {
+                /* Connection closed */
+                break;
+            } else {
+                /* No more data or error */
+                if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                    /* No more data available */
+                    break;
+                }
+                /* Other errors, stop flushing */
+                break;
+            }
+            flush_attempts++;
+            /* Small delay between attempts to allow data to arrive */
+            if (flush_attempts < MAX_FLUSH_ATTEMPTS) {
+                usleep(10000);  /* 10ms */
+            }
+        }
+
+        if (flushed_total > 0) {
+            MB_LOG_INFO("Flushed %zd bytes from socket buffer after transfer", flushed_total);
+        }
+    }
+
+    /* Print telnet mode after transfer (DEBUG only) */
+    telnet_debug_print_mode(&ctx->telnet, "After file transfer");
+
+    /* Clear cancellation flag */
+    transfer_clear_cancel();
+
+    /* Restore application mode */
+    ctx->mode = OTELNET_MODE_CLIENT;
+
+    return result;
+}
+
+/**
+ * Execute file transfer with multiple files using transfer module
+ * Handles mode management, logging, and protocol execution
+ */
+static int otelnet_execute_transfer_multi(otelnet_ctx_t *ctx,
+                                          transfer_protocol_t protocol,
+                                          char * const filenames[],
+                                          int file_count)
+{
+    int telnet_fd;
+    int result;
+    transfer_error_t error;
+
+    if (ctx == NULL) {
+        return ERROR_INVALID_ARG;
+    }
+
+    /* Get telnet socket file descriptor */
+    telnet_fd = telnet_get_fd(&ctx->telnet);
+    if (telnet_fd < 0) {
+        printf("\r\nError: Not connected to telnet server\r\n");
+        return ERROR_CONNECTION;
+    }
+
+    /* Enter transfer mode */
+    if (transfer_enter_mode(&ctx->transfer, protocol) != SUCCESS) {
+        printf("\r\nError: Failed to enter transfer mode\r\n");
+        return ERROR_GENERAL;
+    }
+
+    /* Set application mode */
+    ctx->mode = OTELNET_MODE_TRANSFER;
+
+    /* Save current telnet protocol state */
+    telnet_save_state(&ctx->telnet,
+                     &ctx->transfer.saved_binary_local,
+                     &ctx->transfer.saved_binary_remote,
+                     &ctx->transfer.saved_echo_local,
+                     &ctx->transfer.saved_echo_remote,
+                     &ctx->transfer.saved_sga_local,
+                     &ctx->transfer.saved_sga_remote,
+                     &ctx->transfer.saved_linemode_active);
+
+    /* Print telnet mode before transfer (DEBUG only) */
+    telnet_debug_print_mode(&ctx->telnet, "Before file transfer");
+
+    /* Request BINARY mode for 8-bit clean transmission */
+    telnet_request_binary_mode(&ctx->telnet);
+
+    /* Start transfer logging */
+    transfer_log_start(&ctx->config.transfer, &ctx->transfer);
+
+    /* Execute transfer with multiple files */
+    result = transfer_execute_modem_files(&ctx->config.transfer,
+                                         &ctx->transfer,
+                                         telnet_fd,
+                                         protocol,
+                                         filenames,
+                                         file_count,
+                                         &ctx->telnet);
+
+    /* Determine error type based on result */
+    if (result == SUCCESS) {
+        error = TRANSFER_ERROR_NONE;
+    } else if (transfer_is_cancel_requested()) {
+        /* User cancelled the transfer */
+        error = TRANSFER_ERROR_USER_CANCEL;
+        printf("\r\n\nTransfer cancelled by user\r\n");
+    } else if (result == ERROR_TIMEOUT) {
+        error = TRANSFER_ERROR_TIMEOUT;
+    } else if (result == ERROR_CONNECTION) {
+        error = TRANSFER_ERROR_NETWORK;
+    } else if (result == ERROR_IO) {
+        error = TRANSFER_ERROR_PERMISSION;
+    } else {
+        error = TRANSFER_ERROR_UNKNOWN;
+    }
+
+    /* End transfer logging */
+    transfer_log_end(&ctx->config.transfer, &ctx->transfer, error);
+
+    /* Exit transfer mode */
+    transfer_exit_mode(&ctx->transfer);
+
+    /* Clear protocol detector buffers to prevent false triggers from leftover data */
+    zmodem_detector_init(&ctx->zmodem_detector);
+    xmodem_detector_init(&ctx->xmodem_detector);
+    ymodem_detector_init(&ctx->ymodem_detector);
+
+    /* Restore telnet protocol state to original values */
+    telnet_restore_state(&ctx->telnet,
+                        ctx->transfer.saved_binary_local,
+                        ctx->transfer.saved_binary_remote,
+                        ctx->transfer.saved_echo_local,
+                        ctx->transfer.saved_echo_remote,
+                        ctx->transfer.saved_sga_local,
+                        ctx->transfer.saved_sga_remote,
+                        ctx->transfer.saved_linemode_active);
+
+    /* Flush socket buffer to prevent stale data from triggering auto-detection
+     * After BINARY mode exit, socket may contain:
+     * - IAC negotiation responses (WONT/DONT BINARY)
+     * - Server text data (timestamps, prompts)
+     * These must be discarded to prevent false ZMODEM/XMODEM/YMODEM triggers */
+    telnet_fd = telnet_get_fd(&ctx->telnet);
+    if (telnet_fd >= 0) {
+        unsigned char flush_buf[BUFFER_SIZE];
+        ssize_t flushed_total = 0;
+        int flush_attempts = 0;
+        const int MAX_FLUSH_ATTEMPTS = 10;
+
+        /* Give server time to send any pending data */
+        usleep(100000);  /* 100ms */
+
+        while (flush_attempts < MAX_FLUSH_ATTEMPTS) {
+            ssize_t n = recv(telnet_fd, flush_buf, sizeof(flush_buf), MSG_DONTWAIT);
+            if (n > 0) {
+                flushed_total += n;
+                MB_LOG_DEBUG("Flushed %zd bytes from socket after transfer (attempt %d)",
+                           n, flush_attempts + 1);
+            } else if (n == 0) {
+                /* Connection closed */
+                break;
+            } else {
+                /* No more data or error */
+                if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                    /* No more data available */
+                    break;
+                }
+                /* Other errors, stop flushing */
+                break;
+            }
+            flush_attempts++;
+            /* Small delay between attempts to allow data to arrive */
+            if (flush_attempts < MAX_FLUSH_ATTEMPTS) {
+                usleep(10000);  /* 10ms */
+            }
+        }
+
+        if (flushed_total > 0) {
+            MB_LOG_INFO("Flushed %zd bytes from socket buffer after transfer", flushed_total);
+        }
+    }
+
+    /* Print telnet mode after transfer (DEBUG only) */
+    telnet_debug_print_mode(&ctx->telnet, "After file transfer");
+
+    /* Clear cancellation flag */
+    transfer_clear_cancel();
+
+    /* Restore application mode */
+    ctx->mode = OTELNET_MODE_CLIENT;
+
+    return result;
+}
+
+/**
+ * Auto-start ZMODEM receive (triggered by remote sending)
+ */
+static int otelnet_auto_start_zmodem_receive(otelnet_ctx_t *ctx)
+{
+    if (ctx == NULL) {
+        return ERROR_INVALID_ARG;
+    }
+
+    printf("\r\n\r\n");
+    printf("*** ZMODEM Download Detected ***\r\n");
+    printf("*** Starting automatic receive... ***\r\n");
+    printf("\r\n");
+
+    /* Automatically start ZMODEM receive */
+    return otelnet_execute_transfer(ctx, TRANSFER_ZMODEM_RECV, NULL);
+}
+
+/**
+ * Auto-start ZMODEM send (triggered by remote 'rz' command)
+ */
+static int otelnet_auto_start_zmodem_send(otelnet_ctx_t *ctx)
+{
+    if (ctx == NULL) {
+        return ERROR_INVALID_ARG;
+    }
+
+    printf("\r\n\r\n");
+    printf("*** ZMODEM Upload Request Detected ***\r\n");
+
+    /* Check if prompting is enabled */
+    if (ctx->config.transfer.auto_zmodem_prompt) {
+        printf("*** Enter filename to send (or press Enter to cancel): ");
+        fflush(stdout);
+
+        /* Temporarily restore terminal for input */
+        struct termios saved_term;
+        tcgetattr(STDIN_FILENO, &saved_term);
+
+        struct termios cooked_term = saved_term;
+        cooked_term.c_lflag |= (ICANON | ECHO);
+        tcsetattr(STDIN_FILENO, TCSANOW, &cooked_term);
+
+        /* Read filename */
+        char filename[BUFFER_SIZE];
+        if (fgets(filename, sizeof(filename), stdin) != NULL) {
+            /* Remove trailing newline */
+            size_t len = strlen(filename);
+            if (len > 0 && filename[len - 1] == '\n') {
+                filename[len - 1] = '\0';
+            }
+
+            /* Restore terminal */
+            tcsetattr(STDIN_FILENO, TCSANOW, &saved_term);
+
+            /* Check if user cancelled */
+            if (strlen(filename) == 0) {
+                printf("\r\n*** Upload cancelled ***\r\n\r\n");
+                return SUCCESS;
+            }
+
+            /* Check if file exists */
+            if (access(filename, F_OK) != 0) {
+                printf("\r\n*** Error: File not found: %s ***\r\n\r\n", filename);
+                return ERROR_IO;
+            }
+
+            if (access(filename, R_OK) != 0) {
+                printf("\r\n*** Error: Cannot read file: %s ***\r\n\r\n", filename);
+                return ERROR_IO;
+            }
+
+            printf("*** Sending: %s ***\r\n\r\n", filename);
+
+            /* Start ZMODEM send */
+            return otelnet_execute_transfer(ctx, TRANSFER_ZMODEM_SEND, filename);
+        } else {
+            /* Restore terminal */
+            tcsetattr(STDIN_FILENO, TCSANOW, &saved_term);
+            printf("\r\n*** Upload cancelled ***\r\n\r\n");
+            return SUCCESS;
+        }
+    } else {
+        printf("*** Auto-send disabled (no filename prompt) ***\r\n");
+        printf("*** Use 'sz <filename>' command manually ***\r\n\r\n");
+        return SUCCESS;
+    }
+}
+
+/**
+ * Auto-start XMODEM send (triggered by remote NAK or 'C' characters)
+ */
+static int otelnet_auto_start_xmodem_send(otelnet_ctx_t *ctx)
+{
+    if (ctx == NULL) {
+        return ERROR_INVALID_ARG;
+    }
+
+    printf("\r\n\r\n");
+    printf("*** XMODEM Upload Request Detected ***\r\n");
+
+    /* Check if prompting is enabled */
+    if (ctx->config.transfer.auto_xmodem_prompt) {
+        printf("*** Enter filename to send (or press Enter to cancel): ");
+        fflush(stdout);
+
+        /* Temporarily restore terminal for input */
+        struct termios saved_term;
+        tcgetattr(STDIN_FILENO, &saved_term);
+
+        struct termios cooked_term = saved_term;
+        cooked_term.c_lflag |= (ICANON | ECHO);
+        tcsetattr(STDIN_FILENO, TCSANOW, &cooked_term);
+
+        /* Read filename */
+        char filename[BUFFER_SIZE];
+        if (fgets(filename, sizeof(filename), stdin) != NULL) {
+            /* Remove trailing newline */
+            size_t len = strlen(filename);
+            if (len > 0 && filename[len - 1] == '\n') {
+                filename[len - 1] = '\0';
+            }
+
+            /* Restore terminal */
+            tcsetattr(STDIN_FILENO, TCSANOW, &saved_term);
+
+            /* Check if user cancelled */
+            if (strlen(filename) == 0) {
+                printf("\r\n*** Upload cancelled ***\r\n\r\n");
+                return SUCCESS;
+            }
+
+            /* Check if file exists */
+            if (access(filename, F_OK) != 0) {
+                printf("\r\n*** Error: File not found: %s ***\r\n\r\n", filename);
+                return ERROR_IO;
+            }
+
+            if (access(filename, R_OK) != 0) {
+                printf("\r\n*** Error: Cannot read file: %s ***\r\n\r\n", filename);
+                return ERROR_IO;
+            }
+
+            printf("*** Sending: %s ***\r\n\r\n", filename);
+
+            /* Start XMODEM send */
+            return otelnet_execute_transfer(ctx, TRANSFER_XMODEM_SEND, filename);
+        } else {
+            /* Restore terminal */
+            tcsetattr(STDIN_FILENO, TCSANOW, &saved_term);
+            printf("\r\n*** Upload cancelled ***\r\n\r\n");
+            return SUCCESS;
+        }
+    } else {
+        printf("*** Auto-send disabled (no filename prompt) ***\r\n");
+        printf("*** Use 'sx <filename>' command manually ***\r\n\r\n");
+        return SUCCESS;
+    }
+}
+
+/**
+ * Auto-start YMODEM send (triggered by remote 'C' characters)
+ */
+static int otelnet_auto_start_ymodem_send(otelnet_ctx_t *ctx)
+{
+    if (ctx == NULL) {
+        return ERROR_INVALID_ARG;
+    }
+
+    printf("\r\n\r\n");
+    printf("*** YMODEM Upload Request Detected ***\r\n");
+
+    /* Check if prompting is enabled */
+    if (ctx->config.transfer.auto_ymodem_prompt) {
+        printf("*** Enter filename(s) to send (space-separated, or press Enter to cancel): ");
+        fflush(stdout);
+
+        /* Temporarily restore terminal for input */
+        struct termios saved_term;
+        tcgetattr(STDIN_FILENO, &saved_term);
+
+        struct termios cooked_term = saved_term;
+        cooked_term.c_lflag |= (ICANON | ECHO);
+        tcsetattr(STDIN_FILENO, TCSANOW, &cooked_term);
+
+        /* Read filenames */
+        char input[BUFFER_SIZE];
+        if (fgets(input, sizeof(input), stdin) != NULL) {
+            /* Remove trailing newline */
+            size_t len = strlen(input);
+            if (len > 0 && input[len - 1] == '\n') {
+                input[len - 1] = '\0';
+            }
+
+            /* Restore terminal */
+            tcsetattr(STDIN_FILENO, TCSANOW, &saved_term);
+
+            /* Check if user cancelled */
+            if (strlen(input) == 0) {
+                printf("\r\n*** Upload cancelled ***\r\n\r\n");
+                return SUCCESS;
+            }
+
+            /* Parse filenames */
+            char *filenames[32];
+            int file_count = 0;
+            char *token = strtok(input, " \t");
+            while (token != NULL && file_count < 32) {
+                /* Check if file exists */
+                if (access(token, F_OK) != 0) {
+                    printf("\r\n*** Error: File not found: %s ***\r\n\r\n", token);
+                    return ERROR_IO;
+                }
+
+                if (access(token, R_OK) != 0) {
+                    printf("\r\n*** Error: Cannot read file: %s ***\r\n\r\n", token);
+                    return ERROR_IO;
+                }
+
+                filenames[file_count++] = token;
+                token = strtok(NULL, " \t");
+            }
+
+            if (file_count == 0) {
+                printf("\r\n*** No files specified ***\r\n\r\n");
+                return SUCCESS;
+            }
+
+            printf("*** Sending %d file(s) via YMODEM ***\r\n\r\n", file_count);
+
+            /* Start YMODEM send */
+            return otelnet_execute_transfer_multi(ctx, TRANSFER_YMODEM_SEND, filenames, file_count);
+        } else {
+            /* Restore terminal */
+            tcsetattr(STDIN_FILENO, TCSANOW, &saved_term);
+            printf("\r\n*** Upload cancelled ***\r\n\r\n");
+            return SUCCESS;
+        }
+    } else {
+        printf("*** Auto-send disabled (no filename prompt) ***\r\n");
+        printf("*** Use 'sy <filename>' command manually ***\r\n\r\n");
+        return SUCCESS;
+    }
+}
+
+/**
+ * Auto-start XMODEM receive (triggered by remote text message)
+ */
+static int otelnet_auto_start_xmodem_receive(otelnet_ctx_t *ctx)
+{
+    if (ctx == NULL) {
+        return ERROR_INVALID_ARG;
+    }
+
+    printf("\r\n\r\n");
+    printf("*** XMODEM Download Detected ***\r\n");
+    printf("*** Starting automatic receive... ***\r\n");
+    printf("*** File will be saved as: xmodem.dat ***\r\n");
+    printf("\r\n");
+
+    /* Automatically start XMODEM receive (filename will default to xmodem.dat) */
+    return otelnet_execute_transfer(ctx, TRANSFER_XMODEM_RECV, NULL);
+}
+
+/**
+ * Auto-start YMODEM receive (triggered by remote text message)
+ */
+static int otelnet_auto_start_ymodem_receive(otelnet_ctx_t *ctx)
+{
+    if (ctx == NULL) {
+        return ERROR_INVALID_ARG;
+    }
+
+    printf("\r\n\r\n");
+    printf("*** YMODEM Download Detected ***\r\n");
+    printf("*** Starting automatic receive... ***\r\n");
+    printf("\r\n");
+
+    /* Automatically start YMODEM receive */
+    return otelnet_execute_transfer(ctx, TRANSFER_YMODEM_RECV, NULL);
+}
+
+/**
  * Process console command
  */
 int otelnet_process_console_command(otelnet_ctx_t *ctx, const char *command)
 {
     char cmd_buffer[LINE_BUFFER_SIZE];
+    char args_buffer[LINE_BUFFER_SIZE];  /* Buffer for argument parsing - must remain valid */
     char program[SMALL_BUFFER_SIZE];
     char *args[32];
     int arg_count = 0;
@@ -738,8 +1428,9 @@ int otelnet_process_console_command(otelnet_ctx_t *ctx, const char *command)
         return SUCCESS;
     }
 
-    /* Parse command and arguments */
-    otelnet_parse_command_args(cmd, program, sizeof(program), args, 31, &arg_count);
+    /* Parse command and arguments - args[] will point into args_buffer */
+    otelnet_parse_command_args(cmd, args_buffer, sizeof(args_buffer),
+                               program, sizeof(program), args, 31, &arg_count);
 
     /* quit/exit - exit program */
     if (strcmp(program, "quit") == 0 || strcmp(program, "exit") == 0) {
@@ -760,11 +1451,13 @@ int otelnet_process_console_command(otelnet_ctx_t *ctx, const char *command)
         printf("  sz [options] <files...> - Send via ZMODEM (default)\r\n");
         printf("  sy <files...>           - Send via YMODEM\r\n");
         printf("  sx <file>               - Send via XMODEM (single file)\r\n");
-        printf("  kermit [args]           - Run kermit file transfer\r\n\r\n");
+        printf("  skermit <file>          - Send via Kermit protocol\r\n");
+        printf("  kermit [args]           - Run kermit with custom arguments\r\n\r\n");
         printf("Receive Files:\r\n");
         printf("  rz [options]  - Receive via ZMODEM (default)\r\n");
         printf("  ry            - Receive via YMODEM\r\n");
-        printf("  rx            - Receive via XMODEM (single file)\r\n\r\n");
+        printf("  rx            - Receive via XMODEM (single file)\r\n");
+        printf("  rkermit       - Receive via Kermit protocol\r\n\r\n");
         printf("Protocol Options (for sz/rz):\r\n");
         printf("  --xmodem, -x  - Use XMODEM protocol\r\n");
         printf("  --ymodem, -y  - Use YMODEM protocol\r\n");
@@ -778,10 +1471,11 @@ int otelnet_process_console_command(otelnet_ctx_t *ctx, const char *command)
         printf("  sz --ymodem f1.txt f2.txt - Send multiple via YMODEM\r\n");
         printf("  sy *.pdf                 - Send all PDFs via YMODEM\r\n");
         printf("  sx firmware.bin          - Send single file via XMODEM\r\n");
+        printf("  skermit document.pdf     - Send via Kermit\r\n");
         printf("  rz                       - Receive via ZMODEM\r\n");
         printf("  ry                       - Receive via YMODEM\r\n");
         printf("  rx                       - Receive via XMODEM\r\n");
-        printf("  kermit -s file.dat       - Send via Kermit\r\n");
+        printf("  rkermit                  - Receive via Kermit\r\n");
         printf("  ls /tmp                  - List /tmp directory\r\n");
         printf("========================\r\n");
         return SUCCESS;
@@ -852,46 +1546,100 @@ int otelnet_process_console_command(otelnet_ctx_t *ctx, const char *command)
         }
 
         /* Build argv array */
-        argv[0] = (char *)ctx->config.kermit_path;
+        argv[0] = (char *)ctx->config.transfer.kermit_path;
         for (int i = 0; i < arg_count && i < 31; i++) {
             argv[i + 1] = args[i];
         }
         argv[arg_count + 1] = NULL;
 
-        return otelnet_execute_external_program_with_args(ctx, ctx->config.kermit_path, argv);
+        return otelnet_execute_external_program_with_args(ctx, ctx->config.transfer.kermit_path, argv);
+    }
+
+    /* skermit - send via Kermit protocol */
+    if (strcmp(program, "skermit") == 0) {
+        if (arg_count == 0) {
+            /* No filename provided - show help */
+            printf("\r\nKermit Send Usage:\r\n");
+            printf("  skermit <filename>  - Send file via Kermit protocol\r\n");
+            printf("\r\nExample:\r\n");
+            printf("  skermit document.pdf\r\n");
+            printf("\r\nNote: Binary mode (-i) will be used automatically\r\n");
+            return SUCCESS;
+        }
+
+        if (arg_count > 1) {
+            printf("\r\nError: skermit accepts only one file at a time\r\n");
+            printf("Usage: skermit <filename>\r\n");
+            return ERROR_INVALID_ARG;
+        }
+
+        /* Check if file exists */
+        if (access(args[0], F_OK) != 0) {
+            printf("\r\nError: File not found: %s\r\n", args[0]);
+            return ERROR_IO;
+        }
+
+        if (access(args[0], R_OK) != 0) {
+            printf("\r\nError: Cannot read file: %s\r\n", args[0]);
+            return ERROR_IO;
+        }
+
+        printf("\r\n[Kermit Send Mode]\r\n");
+        printf("[Sending: %s]\r\n", args[0]);
+
+        /* Execute transfer using transfer module */
+        return otelnet_execute_transfer(ctx, TRANSFER_KERMIT_SEND, args[0]);
+    }
+
+    /* rkermit - receive via Kermit protocol */
+    if (strcmp(program, "rkermit") == 0) {
+        if (arg_count > 0) {
+            printf("\r\nNote: rkermit does not accept arguments\r\n");
+            printf("Files will be saved to current directory\r\n");
+        }
+
+        printf("\r\n[Kermit Receive Mode]\r\n");
+        printf("[Ready to receive file(s)]\r\n");
+        char cwd[BUFFER_SIZE];
+        if (getcwd(cwd, sizeof(cwd)) != NULL) {
+            printf("[Save to: %s]\r\n", cwd);
+        }
+
+        /* Execute transfer using transfer module */
+        return otelnet_execute_transfer(ctx, TRANSFER_KERMIT_RECV, NULL);
     }
 
     /* sz/sx/sy - send with protocol options */
     if (strcmp(program, "sz") == 0 || strcmp(program, "sx") == 0 || strcmp(program, "sy") == 0) {
-        const char *protocol = NULL;
+        transfer_protocol_t protocol_type;
         const char *protocol_name = NULL;
         int file_start_idx = 0;
 
         /* Determine protocol from command or first argument */
         if (strcmp(program, "sx") == 0) {
-            protocol = "--xmodem";
+            protocol_type = TRANSFER_XMODEM_SEND;
             protocol_name = "XMODEM";
         } else if (strcmp(program, "sy") == 0) {
-            protocol = "--ymodem";
+            protocol_type = TRANSFER_YMODEM_SEND;
             protocol_name = "YMODEM";
         } else if (arg_count > 0 &&
                    (strcmp(args[0], "--xmodem") == 0 || strcmp(args[0], "-x") == 0)) {
-            protocol = "--xmodem";
+            protocol_type = TRANSFER_XMODEM_SEND;
             protocol_name = "XMODEM";
             file_start_idx = 1;
         } else if (arg_count > 0 &&
                    (strcmp(args[0], "--ymodem") == 0 || strcmp(args[0], "-y") == 0)) {
-            protocol = "--ymodem";
+            protocol_type = TRANSFER_YMODEM_SEND;
             protocol_name = "YMODEM";
             file_start_idx = 1;
         } else if (arg_count > 0 &&
                    (strcmp(args[0], "--zmodem") == 0 || strcmp(args[0], "-z") == 0)) {
-            protocol = "--zmodem";
+            protocol_type = TRANSFER_ZMODEM_SEND;
             protocol_name = "ZMODEM";
             file_start_idx = 1;
         } else {
             /* Default to ZMODEM */
-            protocol = "--zmodem";
+            protocol_type = TRANSFER_ZMODEM_SEND;
             protocol_name = "ZMODEM";
         }
 
@@ -919,44 +1667,126 @@ int otelnet_process_console_command(otelnet_ctx_t *ctx, const char *command)
             return SUCCESS;
         }
 
-        /* Build argv array: sz <protocol> <files...> */
-        argv[0] = (char *)ctx->config.send_zmodem_path;
-        argv[1] = (char *)protocol;
-        int argv_idx = 2;
-        for (int i = file_start_idx; i < arg_count && argv_idx < 32; i++) {
-            argv[argv_idx++] = args[i];
-        }
-        argv[argv_idx] = NULL;
-
         printf("\r\n[Protocol: %s]\r\n", protocol_name);
         printf("[Sending %d file(s)]\r\n", file_count);
 
-        return otelnet_execute_external_program_with_args(ctx, ctx->config.send_zmodem_path, argv);
+        /* Convert relative paths to absolute paths */
+        char *abs_paths[32];  /* Max 32 files */
+        int abs_count = 0;
+        for (int i = 0; i < file_count && i < 32; i++) {
+            const char *rel_path = args[file_start_idx + i];
+            char *abs_path = realpath(rel_path, NULL);
+
+            if (abs_path == NULL) {
+                /* realpath failed - file doesn't exist or no permission */
+                printf("\r\nError: Cannot access file '%s': %s\r\n", rel_path, strerror(errno));
+
+                /* Free previously allocated paths */
+                for (int j = 0; j < abs_count; j++) {
+                    free(abs_paths[j]);
+                }
+                return ERROR_IO;
+            }
+
+            abs_paths[abs_count++] = abs_path;
+            MB_LOG_DEBUG("Converted '%s' to absolute path '%s'", rel_path, abs_path);
+        }
+
+        /* Send notification to server for XMODEM/YMODEM uploads to trigger auto-receive */
+        if (protocol_type == TRANSFER_XMODEM_SEND || protocol_type == TRANSFER_YMODEM_SEND) {
+            char notify_msg[512];
+
+            /* Send same format message as server does, so server can detect with same pattern */
+            /* For multiple files, use basename of first file (not full path) */
+            const char *first_file = strrchr(abs_paths[0], '/');
+            first_file = first_file ? first_file + 1 : abs_paths[0];
+
+            snprintf(notify_msg, sizeof(notify_msg),
+                    "\r\nStarting %s send of '%s'...\r\n", protocol_name, first_file);
+
+            telnet_send(&ctx->telnet, notify_msg, strlen(notify_msg));
+            MB_LOG_INFO("Sent %s upload notification to server", protocol_name);
+
+            /* Request BINARY mode for transfer */
+            printf("\r\n*** Notifying server to start %s receive... ***\r\n", protocol_name);
+            printf("*** Negotiating BINARY mode... ***\r\n");
+
+            telnet_request_binary_mode(&ctx->telnet);
+            MB_LOG_INFO("Requested BINARY mode for %s transfer", protocol_name);
+
+            /* Wait for BINARY mode negotiation to complete */
+            int timeout_count = 50;  /* 5 seconds total (100ms * 50) */
+            bool binary_ready = false;
+
+            while (timeout_count > 0) {
+                /* Check if both directions are in BINARY mode */
+                if (ctx->telnet.binary_local && ctx->telnet.binary_remote) {
+                    binary_ready = true;
+                    MB_LOG_INFO("BINARY mode negotiation complete (bidirectional)");
+                    break;
+                }
+
+                /* Process incoming telnet data (negotiation responses) */
+                fd_set readfds;
+                struct timeval tv;
+                FD_ZERO(&readfds);
+                FD_SET(ctx->telnet.fd, &readfds);
+                tv.tv_sec = 0;
+                tv.tv_usec = 100000;  /* 100ms timeout */
+
+                int ret = select(ctx->telnet.fd + 1, &readfds, NULL, NULL, &tv);
+                if (ret > 0 && FD_ISSET(ctx->telnet.fd, &readfds)) {
+                    /* Process telnet negotiation */
+                    otelnet_process_telnet(ctx);
+                }
+
+                timeout_count--;
+            }
+
+            if (!binary_ready) {
+                MB_LOG_WARNING("BINARY mode negotiation timeout - continuing anyway");
+                printf("*** Warning: BINARY mode negotiation incomplete ***\r\n");
+            } else {
+                printf("*** BINARY mode ready ***\r\n");
+            }
+
+            printf("\r\n");
+        }
+
+        /* Execute transfer using transfer module with absolute paths */
+        int result = otelnet_execute_transfer_multi(ctx, protocol_type, abs_paths, abs_count);
+
+        /* Free allocated absolute paths */
+        for (int i = 0; i < abs_count; i++) {
+            free(abs_paths[i]);
+        }
+
+        return result;
     }
 
     /* rz/rx/ry - receive with protocol options */
     if (strcmp(program, "rz") == 0 || strcmp(program, "rx") == 0 || strcmp(program, "ry") == 0) {
-        const char *protocol = NULL;
+        transfer_protocol_t protocol_type;
         const char *protocol_name = NULL;
 
         /* Determine protocol from command or first argument */
         if (strcmp(program, "rx") == 0) {
-            protocol = "--xmodem";
+            protocol_type = TRANSFER_XMODEM_RECV;
             protocol_name = "XMODEM";
         } else if (strcmp(program, "ry") == 0) {
-            protocol = "--ymodem";
+            protocol_type = TRANSFER_YMODEM_RECV;
             protocol_name = "YMODEM";
         } else if (arg_count > 0 &&
                    (strcmp(args[0], "--xmodem") == 0 || strcmp(args[0], "-x") == 0)) {
-            protocol = "--xmodem";
+            protocol_type = TRANSFER_XMODEM_RECV;
             protocol_name = "XMODEM";
         } else if (arg_count > 0 &&
                    (strcmp(args[0], "--ymodem") == 0 || strcmp(args[0], "-y") == 0)) {
-            protocol = "--ymodem";
+            protocol_type = TRANSFER_YMODEM_RECV;
             protocol_name = "YMODEM";
         } else if (arg_count > 0 &&
                    (strcmp(args[0], "--zmodem") == 0 || strcmp(args[0], "-z") == 0)) {
-            protocol = "--zmodem";
+            protocol_type = TRANSFER_ZMODEM_RECV;
             protocol_name = "ZMODEM";
         } else if (arg_count > 0 &&
                    strcmp(args[0], "--help") != 0 && strcmp(args[0], "-h") != 0) {
@@ -988,17 +1818,8 @@ int otelnet_process_console_command(otelnet_ctx_t *ctx, const char *command)
             return SUCCESS;
         } else {
             /* Default to ZMODEM */
-            protocol = "--zmodem";
+            protocol_type = TRANSFER_ZMODEM_RECV;
             protocol_name = "ZMODEM";
-        }
-
-        /* Build argv array: rz <protocol> */
-        argv[0] = (char *)ctx->config.receive_zmodem_path;
-        if (protocol != NULL) {
-            argv[1] = (char *)protocol;
-            argv[2] = NULL;
-        } else {
-            argv[1] = NULL;
         }
 
         printf("\r\n[Protocol: %s]\r\n", protocol_name);
@@ -1008,7 +1829,8 @@ int otelnet_process_console_command(otelnet_ctx_t *ctx, const char *command)
             printf("[Save to: %s]\r\n", cwd);
         }
 
-        return otelnet_execute_external_program_with_args(ctx, ctx->config.receive_zmodem_path, argv);
+        /* Execute transfer using transfer module */
+        return otelnet_execute_transfer(ctx, protocol_type, NULL);
     }
 
     /* Unknown command */
@@ -1030,6 +1852,11 @@ int otelnet_process_stdin(otelnet_ctx_t *ctx)
 
     if (ctx == NULL) {
         return ERROR_INVALID_ARG;
+    }
+
+    /* Do not process stdin during file transfer */
+    if (ctx->mode == OTELNET_MODE_TRANSFER) {
+        return SUCCESS;
     }
 
     n = read(STDIN_FILENO, buf, sizeof(buf));
@@ -1106,8 +1933,24 @@ int otelnet_process_stdin(otelnet_ctx_t *ctx)
                 }
             }
 
+            /* Convert CR to CR+LF for telnet protocol (RFC 854) */
+            unsigned char processed_buf[BUFFER_SIZE * 2];
+            size_t processed_len = 0;
+
+            for (ssize_t i = 0; i < n && processed_len < sizeof(processed_buf) - 1; i++) {
+                if (buf[i] == '\r') {
+                    /* CR -> CR+LF */
+                    processed_buf[processed_len++] = '\r';
+                    if (processed_len < sizeof(processed_buf)) {
+                        processed_buf[processed_len++] = '\n';
+                    }
+                } else {
+                    processed_buf[processed_len++] = buf[i];
+                }
+            }
+
             /* Prepare data (escape IAC) */
-            telnet_prepare_output(&ctx->telnet, buf, n, telnet_buf, sizeof(telnet_buf), &telnet_len);
+            telnet_prepare_output(&ctx->telnet, processed_buf, processed_len, telnet_buf, sizeof(telnet_buf), &telnet_len);
 
             if (telnet_len > 0) {
                 ssize_t sent = telnet_send(&ctx->telnet, telnet_buf, telnet_len);
@@ -1118,7 +1961,7 @@ int otelnet_process_stdin(otelnet_ctx_t *ctx)
                 }
             }
         }
-    } else {
+    } else if (ctx->mode == OTELNET_MODE_CONSOLE) {
         /* Console mode - accumulate input */
         for (ssize_t i = 0; i < n; i++) {
             unsigned char c = buf[i];
@@ -1211,6 +2054,83 @@ int otelnet_process_telnet(otelnet_ctx_t *ctx)
 
         /* Log received data */
         otelnet_log_data(ctx, "receive", output_buf, output_len);
+
+        /* During file transfer, do not output to stdout - transfer process handles it */
+        if (ctx->mode == OTELNET_MODE_TRANSFER) {
+            return SUCCESS;
+        }
+
+        /* ZMODEM auto-detection (if enabled and not already in transfer/console mode) */
+        if (ctx->config.transfer.auto_zmodem_enabled &&
+            ctx->mode == OTELNET_MODE_CLIENT &&
+            !ctx->transfer.active) {
+
+            bool is_receive_init = false;
+            bool is_send_init = false;
+
+            if (zmodem_detect_trigger(&ctx->zmodem_detector, output_buf, output_len,
+                                     &is_receive_init, &is_send_init)) {
+                if (is_receive_init) {
+                    /* Remote is sending, we should receive */
+                    MB_LOG_INFO("ZMODEM receive trigger detected");
+                    otelnet_auto_start_zmodem_receive(ctx);
+                    return SUCCESS;  /* Return to allow transfer to proceed */
+                } else if (is_send_init) {
+                    /* Remote wants to receive, we should send */
+                    MB_LOG_INFO("ZMODEM send trigger detected");
+                    otelnet_auto_start_zmodem_send(ctx);
+                    return SUCCESS;  /* Return to allow transfer to proceed */
+                }
+            }
+        }
+
+        /* XMODEM auto-detection (if enabled and not already in transfer/console mode) */
+        if (ctx->config.transfer.auto_xmodem_enabled &&
+            ctx->mode == OTELNET_MODE_CLIENT &&
+            !ctx->transfer.active) {
+
+            bool is_receive_init = false;
+            bool is_send_init = false;
+
+            if (xmodem_detect_trigger(&ctx->xmodem_detector, output_buf, output_len,
+                                     &is_receive_init, &is_send_init)) {
+                if (is_receive_init) {
+                    /* Remote is sending, we should receive */
+                    MB_LOG_INFO("XMODEM receive trigger detected");
+                    otelnet_auto_start_xmodem_receive(ctx);
+                    return SUCCESS;  /* Return to allow transfer to proceed */
+                } else if (is_send_init) {
+                    /* Remote wants to receive, we should send */
+                    MB_LOG_INFO("XMODEM send trigger detected");
+                    otelnet_auto_start_xmodem_send(ctx);
+                    return SUCCESS;  /* Return to allow transfer to proceed */
+                }
+            }
+        }
+
+        /* YMODEM auto-detection (if enabled and not already in transfer/console mode) */
+        if (ctx->config.transfer.auto_ymodem_enabled &&
+            ctx->mode == OTELNET_MODE_CLIENT &&
+            !ctx->transfer.active) {
+
+            bool is_receive_init = false;
+            bool is_send_init = false;
+
+            if (ymodem_detect_trigger(&ctx->ymodem_detector, output_buf, output_len,
+                                     &is_receive_init, &is_send_init)) {
+                if (is_receive_init) {
+                    /* Remote is sending, we should receive */
+                    MB_LOG_INFO("YMODEM receive trigger detected");
+                    otelnet_auto_start_ymodem_receive(ctx);
+                    return SUCCESS;  /* Return to allow transfer to proceed */
+                } else if (is_send_init) {
+                    /* Remote wants to receive, we should send */
+                    MB_LOG_INFO("YMODEM send trigger detected");
+                    otelnet_auto_start_ymodem_send(ctx);
+                    return SUCCESS;  /* Return to allow transfer to proceed */
+                }
+            }
+        }
 
         /* In line mode, check if we need to preserve current input line */
         bool is_linemode = telnet_is_linemode(&ctx->telnet);
@@ -1405,7 +2325,7 @@ void otelnet_print_usage(const char *program_name)
     printf("\n");
     printf("Console Mode:\n");
     printf("  Press Ctrl+] to enter console mode\n");
-    printf("  Commands: quit, kermit, sz, rz, help, stats\n");
+    printf("  Commands: quit, skermit, rkermit, sz, rz, help, stats\n");
     printf("  Press Enter with empty line to return to client mode\n");
     printf("\n");
 }
