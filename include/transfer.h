@@ -351,22 +351,26 @@ void transfer_log_end(const transfer_config_t *config, const transfer_state_t *s
  * @param state Transfer state
  * @param socket_fd Telnet socket file descriptor
  * @param filename File to send
+ * @param telnet_ctx Telnet context
+ * @param otelnet_ctx Otelnet context (for disabling auto-detection)
  * @return SUCCESS on success, error code on failure
  */
 int transfer_execute_kermit_send(const transfer_config_t *config, transfer_state_t *state,
                                  int socket_fd, const char *filename,
-                                 telnet_t *telnet_ctx);
+                                 telnet_t *telnet_ctx, struct otelnet_ctx *otelnet_ctx);
 
 /**
  * Execute Kermit receive
  * @param config Transfer configuration
  * @param state Transfer state
  * @param socket_fd Telnet socket file descriptor
+ * @param telnet_ctx Telnet context
+ * @param otelnet_ctx Otelnet context (for disabling auto-detection)
  * @return SUCCESS on success, error code on failure
  */
 int transfer_execute_kermit_receive(const transfer_config_t *config, transfer_state_t *state,
                                     int socket_fd,
-                                    telnet_t *telnet_ctx);
+                                    telnet_t *telnet_ctx, struct otelnet_ctx *otelnet_ctx);
 
 /**
  * Execute ZMODEM/XMODEM/YMODEM transfer

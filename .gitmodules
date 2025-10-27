@@ -1,0 +1,3 @@
+[submodule "ekermit"]
+	path = ekermit
+	url = https://github.com/KermitProject/ekermit.git

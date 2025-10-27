@@ -24,8 +24,6 @@ make clean && make
 
 # Debug build (with symbols, no optimization)
 make debug
-# or
-make DEBUG=1
 
 # Static build (statically linked binary)
 make static
@@ -37,21 +35,27 @@ sudo make install
 sudo make uninstall
 ```
 
+**IMPORTANT BUILD RULE:**
+- **ALWAYS use `make debug` for debug builds**
+- **NEVER use or mention the internal variable syntax in any context**
+- This rule applies even after conversation resets or /clear commands
+- The Makefile handles all build configurations internally
+
 ## Running the Application
 
 ```bash
 # Basic usage
-./build/otelnet <host> <port>
+./otelnet <host> <port>
 
 # Examples
-./build/otelnet localhost 23
-./build/otelnet 192.168.1.100 8881
+./otelnet localhost 23
+./otelnet 192.168.1.100 8881
 
 # With custom config file
-./build/otelnet <host> <port> -c myconfig.conf
+./otelnet <host> <port> -c myconfig.conf
 
 # View help
-./build/otelnet --help
+./otelnet --help
 ```
 
 ## Architecture Overview
@@ -129,15 +133,52 @@ sudo make uninstall
 
 ## Important Implementation Details
 
-### Logging Macros
+### Logging and Output
 
-All logging uses prefixed macros to avoid conflicts with syslog.h constants:
-- `MB_LOG_DEBUG()` - only active in DEBUG builds
-- `MB_LOG_INFO()` - standard operational messages
-- `MB_LOG_WARNING()` - non-critical issues
-- `MB_LOG_ERROR()` - errors with context (file:line)
+**Use standard printf() for all output in this project.**
 
-Never use `LOG_*` macros directly as they conflict with syslog priority constants.
+This project uses standard C printf() functions for all output:
+- Direct output to stdout
+- No custom logging macros (except in submodules like ekermit)
+- Simple and portable approach
+
+**Output Guidelines:**
+- Use `printf()` for normal output
+- Use `fprintf(stderr, ...)` for error messages
+- Always call `fflush(stdout)` after printf() for immediate output
+- Use `\r\n` for line endings in telnet mode for proper terminal handling
+
+**Example Usage:**
+```c
+// Helper function to get timestamp
+static void get_timestamp(char *buf, size_t size) {
+    time_t now = time(NULL);
+    struct tm *tm_info = localtime(&now);
+    strftime(buf, size, "%Y-%m-%d %H:%M:%S", tm_info);
+}
+
+// Normal output with timestamp and prefix
+char timestamp[32];
+get_timestamp(timestamp, sizeof(timestamp));
+printf("[%s][KERMIT-INFO] Connected to %s:%d\r\n", timestamp, host, port);
+fflush(stdout);
+
+// Error output with timestamp and prefix
+get_timestamp(timestamp, sizeof(timestamp));
+fprintf(stderr, "[%s][KERMIT-ERROR] Failed to open file: %s\r\n", timestamp, strerror(errno));
+
+// Debug output (conditional)
+#ifdef DEBUG
+get_timestamp(timestamp, sizeof(timestamp));
+printf("[%s][KERMIT-DEBUG] Processing packet %d\r\n", timestamp, seq);
+fflush(stdout);
+#endif
+```
+
+**Important:**
+- Never use `LOG_*` macros as they conflict with syslog priority constants
+- Keep output simple and direct with standard printf()
+- Submodules (like ekermit) may use their own logging formats internally
 
 ### Terminal Configuration
 
@@ -229,8 +270,9 @@ UTF-8 helper functions available in `otelnet.c`:
 ## Common Issues
 
 **Compilation errors about LOG_* macros:**
-- Use `MB_LOG_*` macros instead of `LOG_*`
-- Include `<syslog.h>` before defining logging macros in otelnet.h
+- Never use `LOG_*` macros as they conflict with syslog priority constants
+- Use standard `printf()` for output instead
+- Include `<syslog.h>` only if absolutely necessary (it defines LOG_* constants)
 
 **Terminal not restored on crash:**
 - Run `reset` or `stty sane` to restore terminal

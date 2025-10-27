@@ -4,8 +4,10 @@
  * Implements file transfer protocols with 8-bit transparent transmission
  */
 
+#include <stddef.h>   /* For NULL */
 #include "transfer.h"
 #include "telnet.h"
+#include "kermit_client.h"
 #include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
@@ -16,22 +18,7 @@
 #include <syslog.h>
 #include <ctype.h>
 
-/* Logging macros */
-#ifdef DEBUG
-#define MB_LOG_DEBUG(fmt, ...) \
-    syslog(LOG_DEBUG, "[DEBUG] %s:%d: " fmt, __FILE__, __LINE__, ##__VA_ARGS__)
-#else
-#define MB_LOG_DEBUG(fmt, ...) do {} while(0)
-#endif
-
-#define MB_LOG_INFO(fmt, ...) \
-    syslog(LOG_INFO, "[INFO] " fmt, ##__VA_ARGS__)
-
-#define MB_LOG_WARNING(fmt, ...) \
-    syslog(LOG_WARNING, "[WARNING] " fmt, ##__VA_ARGS__)
-
-#define MB_LOG_ERROR(fmt, ...) \
-    syslog(LOG_ERR, "[ERROR] %s:%d: " fmt, __FILE__, __LINE__, ##__VA_ARGS__)
+/* Logging macros already defined in telnet.h - do not redefine */
 
 /* Global cancellation flag (for signal handler) */
 static volatile sig_atomic_t g_transfer_cancel_requested = 0;
@@ -121,7 +108,7 @@ int transfer_enter_mode(transfer_state_t *state, transfer_protocol_t protocol)
     }
 
     if (state->active) {
-        MB_LOG_WARNING("Transfer already active");
+        fprintf(stderr, "[%s][WARNING] Transfer already active\r\n", otelnet_get_timestamp());
         return ERROR_GENERAL;
     }
 
@@ -133,7 +120,7 @@ int transfer_enter_mode(transfer_state_t *state, transfer_protocol_t protocol)
     state->total_bytes = 0;
     state->child_pid = 0;
 
-    MB_LOG_INFO("Entering transfer mode: %s", transfer_protocol_name(protocol));
+    printf("[%s][INFO] Entering transfer mode: %s\r\n", otelnet_get_timestamp(), transfer_protocol_name(protocol)); fflush(stdout);
     return SUCCESS;
 }
 
@@ -150,7 +137,7 @@ void transfer_exit_mode(transfer_state_t *state)
         return;
     }
 
-    MB_LOG_INFO("Exiting transfer mode: %s", transfer_protocol_name(state->protocol));
+    printf("[%s][INFO] Exiting transfer mode: %s\r\n", otelnet_get_timestamp(), transfer_protocol_name(state->protocol)); fflush(stdout);
 
     state->active = false;
     state->protocol = TRANSFER_NONE;
@@ -232,7 +219,7 @@ int transfer_setup_terminal(struct termios *saved_termios)
 
     /* Get current terminal settings and save them */
     if (tcgetattr(STDIN_FILENO, saved_termios) < 0) {
-        MB_LOG_ERROR("Failed to get terminal attributes: %s", strerror(errno));
+        fprintf(stderr, "[%s][ERROR] %s:%d: Failed to get terminal attributes: %s\r\n", otelnet_get_timestamp(), __FILE__, __LINE__, strerror(errno));
         return ERROR_IO;
     }
 
@@ -260,11 +247,13 @@ int transfer_setup_terminal(struct termios *saved_termios)
 
     /* Apply new settings */
     if (tcsetattr(STDIN_FILENO, TCSANOW, &tty) < 0) {
-        MB_LOG_ERROR("Failed to set terminal attributes: %s", strerror(errno));
+        fprintf(stderr, "[%s][ERROR] %s:%d: Failed to set terminal attributes: %s\r\n", otelnet_get_timestamp(), __FILE__, __LINE__, strerror(errno));
         return ERROR_IO;
     }
 
-    MB_LOG_DEBUG("Terminal configured for 8-bit transparent transfer");
+    #ifdef DEBUG
+    printf("[DEBUG] %s:%d: Terminal configured for 8-bit transparent transfer\r\n", __FILE__, __LINE__); fflush(stdout);
+#endif
     return SUCCESS;
 }
 
@@ -278,11 +267,13 @@ int transfer_restore_terminal(const struct termios *saved_termios)
     }
 
     if (tcsetattr(STDIN_FILENO, TCSANOW, saved_termios) < 0) {
-        MB_LOG_ERROR("Failed to restore terminal attributes: %s", strerror(errno));
+        fprintf(stderr, "[%s][ERROR] %s:%d: Failed to restore terminal attributes: %s\r\n", otelnet_get_timestamp(), __FILE__, __LINE__, strerror(errno));
         return ERROR_IO;
     }
 
-    MB_LOG_DEBUG("Terminal restored from transfer mode");
+    #ifdef DEBUG
+    printf("[DEBUG] %s:%d: Terminal restored from transfer mode\r\n", __FILE__, __LINE__); fflush(stdout);
+#endif
     return SUCCESS;
 }
 
@@ -296,11 +287,11 @@ void transfer_handle_error(transfer_state_t *state, transfer_error_t error_type)
     }
 
     const char *error_msg = transfer_get_error_message(error_type);
-    MB_LOG_ERROR("Transfer error: %s", error_msg);
+    fprintf(stderr, "[%s][ERROR] %s:%d: Transfer error: %s\r\n", otelnet_get_timestamp(), __FILE__, __LINE__, error_msg);
 
     /* Terminate child process if running */
     if (state->child_pid > 0) {
-        MB_LOG_INFO("Terminating child process (PID: %d)", state->child_pid);
+        printf("[%s][INFO] Terminating child process (PID: %d)\r\n", otelnet_get_timestamp(), state->child_pid); fflush(stdout);
 
         /* Send SIGTERM first */
         kill(state->child_pid, SIGTERM);
@@ -316,7 +307,7 @@ void transfer_handle_error(transfer_state_t *state, transfer_error_t error_type)
 
         /* Force kill if still running */
         if (waitpid(state->child_pid, &status, WNOHANG) == 0) {
-            MB_LOG_WARNING("Child process did not terminate, sending SIGKILL");
+            fprintf(stderr, "[%s][WARNING] Child process did not terminate, sending SIGKILL\r\n", otelnet_get_timestamp());
             kill(state->child_pid, SIGKILL);
             waitpid(state->child_pid, &status, 0);
         }
@@ -420,7 +411,7 @@ bool zmodem_detect_trigger(zmodem_detector_t *detector, const unsigned char *dat
                 detector->buffer[detector->len - 2] == 0x30 &&  /* 0 */
                 detector->buffer[detector->len - 1] == 0x30) {  /* 0 */
 
-                MB_LOG_INFO("ZMODEM ZRQINIT detected - remote wants to send");
+                printf("[%s][INFO] ZMODEM ZRQINIT detected - remote wants to send\r\n", otelnet_get_timestamp()); fflush(stdout);
                 if (is_receive_init) *is_receive_init = true;
                 detector->len = 0;  /* Clear buffer */
                 return true;
@@ -435,7 +426,7 @@ bool zmodem_detect_trigger(zmodem_detector_t *detector, const unsigned char *dat
                 detector->buffer[detector->len - 2] == 0x30 &&  /* 0 */
                 detector->buffer[detector->len - 1] == 0x31) {  /* 1 */
 
-                MB_LOG_INFO("ZMODEM ZRINIT detected - remote starting to send");
+                printf("[%s][INFO] ZMODEM ZRINIT detected - remote starting to send\r\n", otelnet_get_timestamp()); fflush(stdout);
                 if (is_receive_init) *is_receive_init = true;
                 detector->len = 0;
                 return true;
@@ -450,7 +441,7 @@ bool zmodem_detect_trigger(zmodem_detector_t *detector, const unsigned char *dat
                 detector->buffer[detector->len - 2] == 0x30 &&  /* 0 */
                 detector->buffer[detector->len - 1] == 0x38) {  /* 8 */
 
-                MB_LOG_INFO("ZMODEM ZFILE detected - remote sending file");
+                printf("[%s][INFO] ZMODEM ZFILE detected - remote sending file\r\n", otelnet_get_timestamp()); fflush(stdout);
                 if (is_receive_init) *is_receive_init = true;
                 detector->len = 0;
                 return true;
@@ -471,7 +462,7 @@ bool zmodem_detect_trigger(zmodem_detector_t *detector, const unsigned char *dat
                  detector->buffer[detector->len - 2] == '\r' &&
                  detector->buffer[detector->len - 1] == '\n')) {
 
-                MB_LOG_INFO("ZMODEM 'rz' prefix detected - remote is sending (sz output)");
+                printf("[%s][INFO] ZMODEM 'rz' prefix detected - remote is sending (sz output)\r\n", otelnet_get_timestamp()); fflush(stdout);
                 if (is_receive_init) *is_receive_init = true;
                 detector->len = 0;
                 return true;
@@ -522,7 +513,7 @@ void transfer_log_start(const transfer_config_t *config, const transfer_state_t 
 
     FILE *fp = fopen(config->transfer_log_file, "a");
     if (fp == NULL) {
-        MB_LOG_WARNING("Failed to open transfer log file: %s", config->transfer_log_file);
+        fprintf(stderr, "[%s][WARNING] Failed to open transfer log file: %s\r\n", otelnet_get_timestamp(), config->transfer_log_file);
         return;
     }
 
@@ -551,7 +542,7 @@ void transfer_log_end(const transfer_config_t *config, const transfer_state_t *s
 
     FILE *fp = fopen(config->transfer_log_file, "a");
     if (fp == NULL) {
-        MB_LOG_WARNING("Failed to open transfer log file: %s", config->transfer_log_file);
+        fprintf(stderr, "[%s][WARNING] Failed to open transfer log file: %s\r\n", otelnet_get_timestamp(), config->transfer_log_file);
         return;
     }
 
@@ -605,8 +596,7 @@ ssize_t telnet_escape_iac(const unsigned char *input, size_t input_len,
             /* Need 2 bytes for escaped IAC */
             if (out_idx + 2 > output_max) {
                 errno = ENOBUFS;
-                MB_LOG_ERROR("IAC escape buffer overflow: need %zu bytes, have %zu",
-                            out_idx + 2, output_max);
+                fprintf(stderr, "[%s][ERROR] %s:%d: IAC escape buffer overflow: need %zu bytes, have %zu\r\n", otelnet_get_timestamp(), __FILE__, __LINE__, out_idx + 2, output_max);
                 return -1;
             }
             output[out_idx++] = TELNET_IAC;
@@ -615,8 +605,7 @@ ssize_t telnet_escape_iac(const unsigned char *input, size_t input_len,
             /* Regular byte */
             if (out_idx + 1 > output_max) {
                 errno = ENOBUFS;
-                MB_LOG_ERROR("IAC escape buffer overflow: need %zu bytes, have %zu",
-                            out_idx + 1, output_max);
+                fprintf(stderr, "[%s][ERROR] %s:%d: IAC escape buffer overflow: need %zu bytes, have %zu\r\n", otelnet_get_timestamp(), __FILE__, __LINE__, out_idx + 1, output_max);
                 return -1;
             }
             output[out_idx++] = byte;
@@ -649,7 +638,7 @@ ssize_t telnet_unescape_iac(const unsigned char *input, size_t input_len,
                 /* 0xFF 0xFF → single 0xFF (escaped data byte) */
                 if (out_idx + 1 > output_max) {
                     errno = ENOBUFS;
-                    MB_LOG_ERROR("IAC unescape buffer overflow");
+                    fprintf(stderr, "[%s][ERROR] %s:%d: IAC unescape buffer overflow\r\n", otelnet_get_timestamp(), __FILE__, __LINE__);
                     return -1;
                 }
                 output[out_idx++] = TELNET_IAC;
@@ -657,8 +646,7 @@ ssize_t telnet_unescape_iac(const unsigned char *input, size_t input_len,
             } else {
                 /* 0xFF <other> → telnet command, skip both bytes */
                 /* In BINARY mode during file transfer, this should not happen */
-                MB_LOG_WARNING("Unexpected telnet command during binary transfer: "
-                              "IAC 0x%02X (discarded)", byte);
+                fprintf(stderr, "[%s][WARNING] Unexpected telnet command during binary transfer: IAC 0x%02X (discarded)\r\n", otelnet_get_timestamp(), byte);
                 *iac_state = 0;
                 /* Do not output anything - command is discarded */
             }
@@ -671,7 +659,7 @@ ssize_t telnet_unescape_iac(const unsigned char *input, size_t input_len,
                 /* Regular data byte */
                 if (out_idx + 1 > output_max) {
                     errno = ENOBUFS;
-                    MB_LOG_ERROR("IAC unescape buffer overflow");
+                    fprintf(stderr, "[%s][ERROR] %s:%d: IAC unescape buffer overflow\r\n", otelnet_get_timestamp(), __FILE__, __LINE__);
                     return -1;
                 }
                 output[out_idx++] = byte;
@@ -703,15 +691,24 @@ static int relay_data_pipes(int socket_fd, int stdin_pipe_fd, int stdout_pipe_fd
     bool binary_mode_ended = false;
     time_t drain_start_time = 0;
     const int DRAIN_TIMEOUT_SECONDS = 3;  /* Max time to drain buffers after BINARY mode exit */
+    int loop_count = 0;
+
+    printf("[%s][INFO] === Relay Data Pipes Started ===\r\n", otelnet_get_timestamp()); fflush(stdout);
+    printf("[%s][INFO] socket_fd=%d, stdin_pipe_fd=%d, stdout_pipe_fd=%d, child_pid=%d\r\n", otelnet_get_timestamp(), socket_fd, stdin_pipe_fd, stdout_pipe_fd, child_pid); fflush(stdout);
+    printf("[%s][INFO] BINARY mode: local=%d, remote=%d\r\n", otelnet_get_timestamp(), telnet_ctx->binary_local, telnet_ctx->binary_remote); fflush(stdout);
 
     while (1) {
+        loop_count++;
+        if (loop_count % 100 == 1) {  /* Log every 100 iterations */
+            printf("[%s][INFO] Relay loop iteration %d (binary_mode_ended=%d)\r\n", otelnet_get_timestamp(), loop_count, binary_mode_ended); fflush(stdout);
+        }
         /* Check if child has exited */
         int result = waitpid(child_pid, &status, WNOHANG);
         if (result > 0) {
             /* Child exited */
             return 1;
         } else if (result < 0 && errno != EINTR) {
-            MB_LOG_ERROR("waitpid failed: %s", strerror(errno));
+            fprintf(stderr, "[%s][ERROR] %s:%d: waitpid failed: %s\r\n", otelnet_get_timestamp(), __FILE__, __LINE__, strerror(errno));
             return -1;
         }
 
@@ -719,14 +716,14 @@ static int relay_data_pipes(int socket_fd, int stdin_pipe_fd, int stdout_pipe_fd
         if (config->transfer_timeout_seconds > 0) {
             time_t elapsed = time(NULL) - start_time;
             if (elapsed > config->transfer_timeout_seconds) {
-                MB_LOG_WARNING("Transfer timeout after %ld seconds", (long)elapsed);
+                fprintf(stderr, "[%s][WARNING] Transfer timeout after %ld seconds\r\n", otelnet_get_timestamp(), (long)elapsed);
                 return -1;
             }
         }
 
         /* Check for user cancellation */
         if (transfer_is_cancel_requested()) {
-            MB_LOG_INFO("Transfer cancellation requested");
+            printf("[%s][INFO] Transfer cancellation requested\r\n", otelnet_get_timestamp()); fflush(stdout);
             return -1;
         }
 
@@ -735,10 +732,10 @@ static int relay_data_pipes(int socket_fd, int stdin_pipe_fd, int stdout_pipe_fd
             char buf[1];
             ssize_t peek_result = recv(socket_fd, buf, 1, MSG_PEEK | MSG_DONTWAIT);
             if (peek_result == 0) {
-                MB_LOG_WARNING("Socket connection closed during transfer");
+                fprintf(stderr, "[%s][WARNING] Socket connection closed during transfer\r\n", otelnet_get_timestamp());
                 return -1;
             } else if (peek_result < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
-                MB_LOG_WARNING("Socket error during transfer: %s", strerror(errno));
+                fprintf(stderr, "[%s][WARNING] Socket error during transfer: %s\r\n", otelnet_get_timestamp(), strerror(errno));
                 return -1;
             }
         }
@@ -747,8 +744,7 @@ static int relay_data_pipes(int socket_fd, int stdin_pipe_fd, int stdout_pipe_fd
         if (binary_mode_ended && drain_start_time > 0) {
             time_t drain_elapsed = time(NULL) - drain_start_time;
             if (drain_elapsed > DRAIN_TIMEOUT_SECONDS) {
-                MB_LOG_INFO("Buffer drain timeout after %ld seconds, completing transfer",
-                           (long)drain_elapsed);
+                printf("[%s][INFO] Buffer drain timeout after %ld seconds, completing transfer\r\n", otelnet_get_timestamp(), (long)drain_elapsed); fflush(stdout);
                 return 1;  /* Signal completion */
             }
         }
@@ -769,7 +765,7 @@ static int relay_data_pipes(int socket_fd, int stdin_pipe_fd, int stdout_pipe_fd
         result = select(maxfd + 1, &readfds, NULL, NULL, &tv);
         if (result < 0) {
             if (errno == EINTR) continue;
-            MB_LOG_ERROR("select failed: %s", strerror(errno));
+            fprintf(stderr, "[%s][ERROR] %s:%d: select failed: %s\r\n", otelnet_get_timestamp(), __FILE__, __LINE__, strerror(errno));
             return -1;
         }
 
@@ -783,14 +779,22 @@ static int relay_data_pipes(int socket_fd, int stdin_pipe_fd, int stdout_pipe_fd
             ssize_t n = read(socket_fd, raw_buffer, sizeof(raw_buffer));
             if (n < 0) {
                 if (errno != EAGAIN && errno != EWOULDBLOCK) {
-                    MB_LOG_ERROR("read from socket failed: %s", strerror(errno));
+                    fprintf(stderr, "[%s][ERROR] %s:%d: read from socket failed: %s\r\n", otelnet_get_timestamp(), __FILE__, __LINE__, strerror(errno));
                     return -1;
                 }
             } else if (n == 0) {
-                MB_LOG_INFO("Socket closed by peer");
+                printf("[%s][INFO] Socket closed by peer\r\n", otelnet_get_timestamp()); fflush(stdout);
                 return -1;
             } else {
-                MB_LOG_INFO("Relay: Read %zd bytes from socket", n);
+                printf("[%s][INFO] >>> Relay: Read %zd bytes from socket (RAW)\r\n", otelnet_get_timestamp(), n); fflush(stdout);
+
+                /* Log first 64 bytes of raw data */
+                char hex_buf[256];
+                size_t log_len = n < 64 ? n : 64;
+                for (size_t i = 0; i < log_len; i++) {
+                    snprintf(hex_buf + i*3, 4, "%02X ", raw_buffer[i]);
+                }
+                printf("[%s][INFO] Raw data (first %zu bytes): %s\r\n", otelnet_get_timestamp(), log_len, hex_buf); fflush(stdout);
 
                 /* Save BINARY mode state BEFORE processing
                  * This detects mode changes that happen during IAC processing */
@@ -800,8 +804,7 @@ static int relay_data_pipes(int socket_fd, int stdin_pipe_fd, int stdout_pipe_fd
                 size_t processed_len;
                 telnet_process_input(telnet_ctx, raw_buffer, n, proc_buffer, sizeof(proc_buffer), &processed_len);
 
-                MB_LOG_INFO("Relay: After IAC processing: %zu bytes clean data (was_binary=%d)",
-                           processed_len, was_binary_mode);
+                printf("[%s][INFO] Relay: After IAC processing: %zu bytes clean data (was_binary=%d)\r\n", otelnet_get_timestamp(), processed_len, was_binary_mode); fflush(stdout);
 
                 /* Check if BINARY mode changed during this packet processing
                  * CRITICAL: If mode changed, processed_len may contain mixed data:
@@ -811,11 +814,10 @@ static int relay_data_pipes(int socket_fd, int stdin_pipe_fd, int stdout_pipe_fd
                 bool is_binary_mode = telnet_ctx->binary_remote && telnet_ctx->binary_local;
                 bool mode_changed_to_text = was_binary_mode && !is_binary_mode;
 
-                MB_LOG_INFO("Relay: Mode check: was_binary=%d, is_binary=%d, mode_changed=%d",
-                           was_binary_mode, is_binary_mode, mode_changed_to_text);
+                printf("[%s][INFO] Relay: Mode check: was_binary=%d, is_binary=%d, mode_changed=%d\r\n", otelnet_get_timestamp(), was_binary_mode, is_binary_mode, mode_changed_to_text); fflush(stdout);
 
                 if (mode_changed_to_text) {
-                    MB_LOG_INFO("BINARY mode ended by remote, entering buffer drain mode");
+                    printf("[%s][INFO] BINARY mode ended by remote, entering buffer drain mode\r\n", otelnet_get_timestamp()); fflush(stdout);
 
                     /* CRITICAL FIX: Write data to stdin pipe BEFORE entering drain mode
                      * The processed_len may contain the final ACK from rz/sz that client needs.
@@ -824,7 +826,7 @@ static int relay_data_pipes(int socket_fd, int stdin_pipe_fd, int stdout_pipe_fd
                      * same packet or consecutive reads. We must deliver this ACK to sz/rz
                      * before stopping socket reads, otherwise sz will hang waiting for ACK. */
                     if (processed_len > 0) {
-                        MB_LOG_INFO("Relay: Writing %zu bytes to stdin pipe before drain mode (may contain final ACK)", processed_len);
+                        printf("[%s][INFO] Relay: Writing %zu bytes to stdin pipe before drain mode (may contain final ACK)\r\n", otelnet_get_timestamp(), processed_len); fflush(stdout);
 
                         /* Log data for debugging */
                         char hex_buf[96];
@@ -832,16 +834,16 @@ static int relay_data_pipes(int socket_fd, int stdin_pipe_fd, int stdout_pipe_fd
                         for (size_t i = 0; i < log_len; i++) {
                             snprintf(hex_buf + i*3, 4, "%02X ", proc_buffer[i]);
                         }
-                        MB_LOG_INFO("Data to write (first %zu bytes): %s", log_len, hex_buf);
+                        printf("[%s][INFO] Data to write (first %zu bytes): %s\r\n", otelnet_get_timestamp(), log_len, hex_buf); fflush(stdout);
 
                         ssize_t written = write(stdin_pipe_fd, proc_buffer, processed_len);
                         if (written < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
-                            MB_LOG_ERROR("write to stdin pipe failed: %s", strerror(errno));
+                            fprintf(stderr, "[%s][ERROR] %s:%d: write to stdin pipe failed: %s\r\n", otelnet_get_timestamp(), __FILE__, __LINE__, strerror(errno));
                             return -1;
                         }
-                        MB_LOG_INFO("Relay: Successfully wrote %zd bytes to stdin pipe before drain", written);
+                        printf("[%s][INFO] Relay: Successfully wrote %zd bytes to stdin pipe before drain\r\n", otelnet_get_timestamp(), written); fflush(stdout);
                     } else {
-                        MB_LOG_INFO("BINARY mode exit with no data in packet (IAC only)");
+                        printf("[%s][INFO] BINARY mode exit with no data in packet (IAC only)\r\n", otelnet_get_timestamp()); fflush(stdout);
                     }
 
                     /* Now enter drain mode - stop reading from socket, only drain stdout pipe */
@@ -849,13 +851,13 @@ static int relay_data_pipes(int socket_fd, int stdin_pipe_fd, int stdout_pipe_fd
                     drain_start_time = time(NULL);
                 } else if (processed_len > 0) {
                     /* Normal case: still in BINARY mode, write data to stdin pipe */
-                    MB_LOG_INFO("Relay: Writing %zu bytes to stdin pipe", processed_len);
+                    printf("[%s][INFO] Relay: Writing %zu bytes to stdin pipe\r\n", otelnet_get_timestamp(), processed_len); fflush(stdout);
                     ssize_t written = write(stdin_pipe_fd, proc_buffer, processed_len);
                     if (written < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
-                        MB_LOG_ERROR("write to stdin pipe failed: %s", strerror(errno));
+                        fprintf(stderr, "[%s][ERROR] %s:%d: write to stdin pipe failed: %s\r\n", otelnet_get_timestamp(), __FILE__, __LINE__, strerror(errno));
                         return -1;
                     }
-                    MB_LOG_INFO("Relay: Successfully wrote %zd bytes to stdin pipe", written);
+                    printf("[%s][INFO] Relay: Successfully wrote %zd bytes to stdin pipe\r\n", otelnet_get_timestamp(), written); fflush(stdout);
                 }
             }
         }
@@ -865,39 +867,47 @@ static int relay_data_pipes(int socket_fd, int stdin_pipe_fd, int stdout_pipe_fd
             ssize_t n = read(stdout_pipe_fd, pipe_buffer, sizeof(pipe_buffer));
             if (n < 0) {
                 if (errno != EAGAIN && errno != EWOULDBLOCK) {
-                    MB_LOG_ERROR("read from stdout pipe failed: %s", strerror(errno));
+                    fprintf(stderr, "[%s][ERROR] %s:%d: read from stdout pipe failed: %s\r\n", otelnet_get_timestamp(), __FILE__, __LINE__, strerror(errno));
                     return -1;
                 }
             } else if (n == 0) {
                 /* Pipe closed, child probably exited or finished sending */
                 if (binary_mode_ended) {
-                    MB_LOG_INFO("Stdout pipe closed during drain mode, transfer complete");
+                    printf("[%s][INFO] Stdout pipe closed during drain mode, transfer complete\r\n", otelnet_get_timestamp()); fflush(stdout);
                 } else {
-                    MB_LOG_INFO("Stdout pipe closed");
+                    printf("[%s][INFO] Stdout pipe closed\r\n", otelnet_get_timestamp()); fflush(stdout);
                 }
                 return 1;
             } else if (n > 0) {
                 /* Continue sending data from sz/rz even in drain mode
                  * to ensure final ACK packets are transmitted */
                 if (binary_mode_ended) {
-                    MB_LOG_INFO("Draining %zd bytes from stdout pipe", n);
+                    printf("[%s][INFO] <<< Draining %zd bytes from stdout pipe\r\n", otelnet_get_timestamp(), n); fflush(stdout);
                 } else {
-                    MB_LOG_INFO("Relay: Read %zd bytes from stdout pipe", n);
+                    printf("[%s][INFO] <<< Relay: Read %zd bytes from stdout pipe (kermit output)\r\n", otelnet_get_timestamp(), n); fflush(stdout);
                 }
+
+                /* Log first 64 bytes of data from kermit */
+                char hex_buf[256];
+                size_t log_len = n < 64 ? n : 64;
+                for (size_t i = 0; i < log_len; i++) {
+                    snprintf(hex_buf + i*3, 4, "%02X ", pipe_buffer[i]);
+                }
+                printf("[%s][INFO] Kermit output (first %zu bytes): %s\r\n", otelnet_get_timestamp(), log_len, hex_buf); fflush(stdout);
 
                 /* Escape IAC bytes for telnet protocol */
                 size_t escaped_len;
                 telnet_prepare_output(telnet_ctx, pipe_buffer, n, proc_buffer, sizeof(proc_buffer), &escaped_len);
 
                 if (escaped_len > 0) {
-                    MB_LOG_INFO("Relay: Writing %zu bytes to socket", escaped_len);
+                    printf("[%s][INFO] Relay: Writing %zu bytes to socket\r\n", otelnet_get_timestamp(), escaped_len); fflush(stdout);
                     /* Write escaped data to socket */
                     ssize_t written = write(socket_fd, proc_buffer, escaped_len);
                     if (written < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
-                        MB_LOG_ERROR("write to socket failed: %s", strerror(errno));
+                        fprintf(stderr, "[%s][ERROR] %s:%d: write to socket failed: %s\r\n", otelnet_get_timestamp(), __FILE__, __LINE__, strerror(errno));
                         return -1;
                     }
-                    MB_LOG_INFO("Relay: Successfully wrote %zd bytes to socket", written);
+                    printf("[%s][INFO] Relay: Successfully wrote %zd bytes to socket\r\n", otelnet_get_timestamp(), written); fflush(stdout);
                 }
             }
         }
@@ -922,19 +932,19 @@ static int execute_external_program(const char *program_path, char *const argv[]
     char command_line[BUFFER_SIZE];
 
     if (config == NULL) {
-        MB_LOG_ERROR("Config is NULL");
+        fprintf(stderr, "[%s][ERROR] %s:%d: Config is NULL\r\n", otelnet_get_timestamp(), __FILE__, __LINE__);
         return ERROR_INVALID_ARG;
     }
 
     /* Check if program exists and is executable */
     if (access(program_path, X_OK) != 0) {
-        MB_LOG_ERROR("Program not found or not executable: %s", program_path);
+        fprintf(stderr, "[%s][ERROR] %s:%d: Program not found or not executable: %s\r\n", otelnet_get_timestamp(), __FILE__, __LINE__, program_path);
         fprintf(stderr, "\r\nError: Program '%s' not found or not executable\r\n", program_path);
         return ERROR_GENERAL;
     }
 
     /* lrzsz-lite doesn't need PTY, so no script command required */
-    MB_LOG_INFO("Using direct execution mode (PTY-free)");
+    printf("[%s][INFO] Using direct execution mode (PTY-free)\r\n", otelnet_get_timestamp()); fflush(stdout);
 
     /* Build command line for logging/display */
     size_t offset = 0;
@@ -948,30 +958,37 @@ static int execute_external_program(const char *program_path, char *const argv[]
     fprintf(stderr, "\r\n[Starting transfer: %s]\r\n", command_line);
     fflush(stderr);
 
-    MB_LOG_INFO("Direct execution (no PTY): %s", command_line);
+    printf("[%s][INFO] === Starting External Program Execution ===\r\n", otelnet_get_timestamp()); fflush(stdout);
+    printf("[%s][INFO] Direct execution (no PTY): %s\r\n", otelnet_get_timestamp(), command_line); fflush(stdout);
+    printf("[%s][INFO] Socket FD: %d\r\n", otelnet_get_timestamp(), socket_fd); fflush(stdout);
 
     /* Create pipes for stdin and stdout */
+    printf("[%s][INFO] Creating stdin and stdout pipes...\r\n", otelnet_get_timestamp()); fflush(stdout);
     if (pipe(stdin_pipe) < 0) {
-        MB_LOG_ERROR("Failed to create stdin pipe: %s", strerror(errno));
+        fprintf(stderr, "[%s][ERROR] %s:%d: Failed to create stdin pipe: %s\r\n", otelnet_get_timestamp(), __FILE__, __LINE__, strerror(errno));
         fprintf(stderr, "\r\nError: Failed to create stdin pipe\r\n");
         return ERROR_GENERAL;
     }
+    printf("[%s][INFO] stdin_pipe created: read_fd=%d, write_fd=%d\r\n", otelnet_get_timestamp(), stdin_pipe[0], stdin_pipe[1]); fflush(stdout);
 
     if (pipe(stdout_pipe) < 0) {
-        MB_LOG_ERROR("Failed to create stdout pipe: %s", strerror(errno));
+        fprintf(stderr, "[%s][ERROR] %s:%d: Failed to create stdout pipe: %s\r\n", otelnet_get_timestamp(), __FILE__, __LINE__, strerror(errno));
         close(stdin_pipe[0]);
         close(stdin_pipe[1]);
         fprintf(stderr, "\r\nError: Failed to create stdout pipe\r\n");
         return ERROR_GENERAL;
     }
+    printf("[%s][INFO] stdout_pipe created: read_fd=%d, write_fd=%d\r\n", otelnet_get_timestamp(), stdout_pipe[0], stdout_pipe[1]); fflush(stdout);
 
     /* Set pipes to non-blocking mode */
+    printf("[%s][INFO] Setting pipes to non-blocking mode\r\n", otelnet_get_timestamp()); fflush(stdout);
     fcntl(stdin_pipe[1], F_SETFL, fcntl(stdin_pipe[1], F_GETFL, 0) | O_NONBLOCK);
     fcntl(stdout_pipe[0], F_SETFL, fcntl(stdout_pipe[0], F_GETFL, 0) | O_NONBLOCK);
 
+    printf("[%s][INFO] Forking child process...\r\n", otelnet_get_timestamp()); fflush(stdout);
     pid = fork();
     if (pid < 0) {
-        MB_LOG_ERROR("Failed to fork: %s", strerror(errno));
+        fprintf(stderr, "[%s][ERROR] %s:%d: Failed to fork: %s\r\n", otelnet_get_timestamp(), __FILE__, __LINE__, strerror(errno));
         fprintf(stderr, "\r\nError: Failed to fork process: %s\r\n", strerror(errno));
         close(stdin_pipe[0]);
         close(stdin_pipe[1]);
@@ -1023,28 +1040,39 @@ static int execute_external_program(const char *program_path, char *const argv[]
 
     /* Parent process */
 
+    printf("[%s][INFO] Child process forked successfully: PID=%d\r\n", otelnet_get_timestamp(), pid); fflush(stdout);
+
     /* Close unused pipe ends */
+    printf("[%s][INFO] Parent: Closing unused pipe ends\r\n", otelnet_get_timestamp()); fflush(stdout);
     close(stdin_pipe[0]);   /* Close read end of stdin pipe */
     close(stdout_pipe[1]);  /* Close write end of stdout pipe */
+    printf("[%s][INFO] Parent: stdin_write_fd=%d, stdout_read_fd=%d\r\n", otelnet_get_timestamp(), stdin_pipe[1], stdout_pipe[0]); fflush(stdout);
 
     state->child_pid = pid;
     start_time = time(NULL);
 
-    MB_LOG_INFO("Starting pipe relay for child process %d (timeout: %ds)",
-                pid, config->transfer_timeout_seconds);
+    printf("[%s][INFO] === Starting Pipe Relay ===\r\n", otelnet_get_timestamp()); fflush(stdout);
+    printf("[%s][INFO] Child PID: %d\r\n", otelnet_get_timestamp(), pid); fflush(stdout);
+    printf("[%s][INFO] Socket FD: %d\r\n", otelnet_get_timestamp(), socket_fd); fflush(stdout);
+    printf("[%s][INFO] stdin_pipe write_fd: %d\r\n", otelnet_get_timestamp(), stdin_pipe[1]); fflush(stdout);
+    printf("[%s][INFO] stdout_pipe read_fd: %d\r\n", otelnet_get_timestamp(), stdout_pipe[0]); fflush(stdout);
+    printf("[%s][INFO] Transfer timeout: %d seconds\r\n", otelnet_get_timestamp(), config->transfer_timeout_seconds); fflush(stdout);
 
     /* Start bidirectional relay between socket and pipes */
     int relay_result = relay_data_pipes(socket_fd, stdin_pipe[1], stdout_pipe[0],
                                         pid, config, start_time, telnet_ctx);
 
+    printf("[%s][INFO] === Pipe Relay Completed (result=%d) ===\r\n", otelnet_get_timestamp(), relay_result); fflush(stdout);
+
     /* Close pipes */
+    printf("[%s][INFO] Closing pipes after relay\r\n", otelnet_get_timestamp()); fflush(stdout);
     close(stdin_pipe[1]);
     close(stdout_pipe[0]);
 
     /* Handle relay result */
     if (relay_result < 0) {
         /* Relay error or timeout/cancel - kill child */
-        MB_LOG_WARNING("Relay failed, terminating child process %d", pid);
+        fprintf(stderr, "[%s][WARNING] Relay failed, terminating child process %d\r\n", otelnet_get_timestamp(), pid);
 
         /* First try SIGTERM */
         if (kill(pid, SIGTERM) == 0) {
@@ -1052,14 +1080,14 @@ static int execute_external_program(const char *program_path, char *const argv[]
             for (int i = 0; i < 20; i++) {
                 int result = waitpid(pid, &status, WNOHANG);
                 if (result > 0) {
-                    MB_LOG_INFO("Child terminated gracefully after SIGTERM");
+                    printf("[%s][INFO] Child terminated gracefully after SIGTERM\r\n", otelnet_get_timestamp()); fflush(stdout);
                     goto check_status;
                 }
                 usleep(100000);
             }
 
             /* Still running, force kill */
-            MB_LOG_WARNING("Child did not respond to SIGTERM, sending SIGKILL");
+            fprintf(stderr, "[%s][WARNING] Child did not respond to SIGTERM, sending SIGKILL\r\n", otelnet_get_timestamp());
             kill(pid, SIGKILL);
             waitpid(pid, &status, 0);
         }
@@ -1094,25 +1122,25 @@ check_status:
          * - Other: Unexpected error
          */
         if (exit_code == 0) {
-            MB_LOG_INFO("Transfer completed successfully (exit code 0)");
+            printf("[%s][INFO] Transfer completed successfully (exit code 0)\r\n", otelnet_get_timestamp()); fflush(stdout);
             fprintf(stderr, "\r\n[Transfer completed successfully]\r\n");
             return SUCCESS;
         } else if (relay_result == 1) {
             /* Relay completed normally but program returned error
              * This could be normal for some cases (e.g., user cancellation on remote) */
-            MB_LOG_WARNING("Transfer completed with exit code %d", exit_code);
+            fprintf(stderr, "[%s][WARNING] Transfer completed with exit code %d\r\n", otelnet_get_timestamp(), exit_code);
             fprintf(stderr, "\r\n[Transfer completed with warnings (exit code %d)]\r\n", exit_code);
             return SUCCESS;  /* Consider as success if relay completed */
         } else {
             /* Forced termination */
-            MB_LOG_ERROR("Transfer program exited with code %d after forced termination", exit_code);
+            fprintf(stderr, "[%s][ERROR] %s:%d: Transfer program exited with code %d after forced termination\r\n", otelnet_get_timestamp(), __FILE__, __LINE__, exit_code);
             fprintf(stderr, "\r\n[Transfer failed: program exited with code %d]\r\n", exit_code);
             return ERROR_GENERAL;
         }
 
     } else if (WIFSIGNALED(status)) {
         int signal = WTERMSIG(status);
-        MB_LOG_ERROR("Transfer program terminated by signal %d", signal);
+        fprintf(stderr, "[%s][ERROR] %s:%d: Transfer program terminated by signal %d\r\n", otelnet_get_timestamp(), __FILE__, __LINE__, signal);
         fprintf(stderr, "\r\n[Transfer terminated by signal %d]\r\n", signal);
         return ERROR_GENERAL;
     }
@@ -1122,11 +1150,11 @@ check_status:
 }
 
 /**
- * Execute Kermit send
+ * Execute Kermit send (using embedded ekermit)
  */
 int transfer_execute_kermit_send(const transfer_config_t *config, transfer_state_t *state,
                                  int socket_fd, const char *filename,
-                                 telnet_t *telnet_ctx)
+                                 telnet_t *telnet_ctx, struct otelnet_ctx *otelnet_ctx)
 {
     if (config == NULL || state == NULL || filename == NULL) {
         return ERROR_INVALID_ARG;
@@ -1136,42 +1164,65 @@ int transfer_execute_kermit_send(const transfer_config_t *config, transfer_state
     strncpy(state->filename, filename, sizeof(state->filename) - 1);
     state->filename[sizeof(state->filename) - 1] = '\0';
 
-    /* Build argument array */
-    char *argv[] = {
-        (char *)config->kermit_path,
-        "-s",      /* Send */
-        "-i",      /* Binary mode */
-        (char *)filename,
-        NULL
-    };
+    /* Mark transfer as active */
+    state->active = true;
+    state->protocol = TRANSFER_KERMIT_SEND;
+    state->start_time = time(NULL);
+    state->last_data_time = time(NULL);
 
-    MB_LOG_INFO("Executing Kermit send: %s", filename);
+    printf("[%s][INFO] Starting embedded Kermit send: %s\r\n", otelnet_get_timestamp(), filename); fflush(stdout);
 
-    return execute_external_program(config->kermit_path, argv, socket_fd, state, config, telnet_ctx);
+    /* Call embedded Kermit implementation (no fork/exec!) */
+    int result = kermit_client_send(socket_fd, telnet_ctx, state, filename, otelnet_ctx);
+
+    /* Clean up */
+    state->active = false;
+
+    if (result == SUCCESS) {
+        printf("[%s][INFO] Kermit send completed successfully\r\n", otelnet_get_timestamp()); fflush(stdout);
+    } else {
+        fprintf(stderr, "[%s][ERROR] %s:%d: Kermit send failed with error code: %d\r\n", otelnet_get_timestamp(), __FILE__, __LINE__, result);
+    }
+
+    return result;
 }
 
 /**
- * Execute Kermit receive
+ * Execute Kermit receive (using embedded ekermit)
  */
 int transfer_execute_kermit_receive(const transfer_config_t *config, transfer_state_t *state,
                                     int socket_fd,
-                                    telnet_t *telnet_ctx)
+                                    telnet_t *telnet_ctx, struct otelnet_ctx *otelnet_ctx)
 {
     if (config == NULL || state == NULL) {
+        fprintf(stderr, "[%s][ERROR] %s:%d: Invalid arguments: config=%p, state=%p\r\n", otelnet_get_timestamp(), __FILE__, __LINE__, (void*)config, (void*)state);
         return ERROR_INVALID_ARG;
     }
 
-    /* Build argument array */
-    char *argv[] = {
-        (char *)config->kermit_path,
-        "-r",      /* Receive */
-        "-i",      /* Binary mode */
-        NULL
-    };
+    /* Mark transfer as active */
+    state->active = true;
+    state->protocol = TRANSFER_KERMIT_RECV;
+    state->start_time = time(NULL);
+    state->last_data_time = time(NULL);
 
-    MB_LOG_INFO("Executing Kermit receive");
+    printf("[%s][INFO] === Embedded Kermit Receive Started ===\r\n", otelnet_get_timestamp()); fflush(stdout);
+    printf("[%s][INFO] Socket FD: %d\r\n", otelnet_get_timestamp(), socket_fd); fflush(stdout);
+    printf("[%s][INFO] BINARY mode state: local=%d, remote=%d\r\n", otelnet_get_timestamp(), telnet_ctx ? telnet_ctx->binary_local : -1,
+                telnet_ctx ? telnet_ctx->binary_remote : -1); fflush(stdout);
 
-    return execute_external_program(config->kermit_path, argv, socket_fd, state, config, telnet_ctx);
+    /* Call embedded Kermit implementation (no fork/exec!) */
+    int result = kermit_client_receive(socket_fd, telnet_ctx, state, otelnet_ctx);
+
+    /* Clean up */
+    state->active = false;
+
+    if (result == SUCCESS) {
+        printf("[%s][INFO] === Kermit Receive Completed Successfully ===\r\n", otelnet_get_timestamp()); fflush(stdout);
+    } else {
+        fprintf(stderr, "[%s][ERROR] %s:%d: === Kermit Receive Failed (error=%d) ===\r\n", otelnet_get_timestamp(), __FILE__, __LINE__, result);
+    }
+
+    return result;
 }
 
 /**
@@ -1195,7 +1246,7 @@ int transfer_execute_modem(const transfer_config_t *config, transfer_state_t *st
         case TRANSFER_XMODEM_SEND:
         case TRANSFER_YMODEM_SEND:
             if (filename == NULL) {
-                MB_LOG_ERROR("Filename required for send operation");
+                fprintf(stderr, "[%s][ERROR] %s:%d: Filename required for send operation\r\n", otelnet_get_timestamp(), __FILE__, __LINE__);
                 return ERROR_INVALID_ARG;
             }
             program_path = config->send_zmodem_path;
@@ -1245,11 +1296,11 @@ int transfer_execute_modem(const transfer_config_t *config, transfer_state_t *st
             break;
 
         default:
-            MB_LOG_ERROR("Invalid modem protocol: %d", protocol);
+            fprintf(stderr, "[%s][ERROR] %s:%d: Invalid modem protocol: %d\r\n", otelnet_get_timestamp(), __FILE__, __LINE__, protocol);
             return ERROR_INVALID_ARG;
     }
 
-    MB_LOG_INFO("Executing %s", transfer_protocol_name(protocol));
+    printf("[%s][INFO] Executing %s\r\n", otelnet_get_timestamp(), transfer_protocol_name(protocol)); fflush(stdout);
 
     return execute_external_program(program_path, argv, socket_fd, state, config, telnet_ctx);
 }
@@ -1276,7 +1327,7 @@ int transfer_execute_modem_files(const transfer_config_t *config, transfer_state
         case TRANSFER_XMODEM_SEND:
         case TRANSFER_YMODEM_SEND:
             if (filenames == NULL || file_count == 0) {
-                MB_LOG_ERROR("Filenames required for send operation");
+                fprintf(stderr, "[%s][ERROR] %s:%d: Filenames required for send operation\r\n", otelnet_get_timestamp(), __FILE__, __LINE__);
                 return ERROR_INVALID_ARG;
             }
 
@@ -1340,11 +1391,11 @@ int transfer_execute_modem_files(const transfer_config_t *config, transfer_state
             break;
 
         default:
-            MB_LOG_ERROR("Invalid modem protocol: %d", protocol);
+            fprintf(stderr, "[%s][ERROR] %s:%d: Invalid modem protocol: %d\r\n", otelnet_get_timestamp(), __FILE__, __LINE__, protocol);
             return ERROR_INVALID_ARG;
     }
 
-    MB_LOG_INFO("Executing %s with %d file(s)", transfer_protocol_name(protocol), file_count);
+    printf("[%s][INFO] Executing %s with %d file(s)\r\n", otelnet_get_timestamp(), transfer_protocol_name(protocol), file_count); fflush(stdout);
 
     return execute_external_program(program_path, argv, socket_fd, state, config, telnet_ctx);
 }
@@ -1430,7 +1481,7 @@ bool xmodem_detect_trigger(xmodem_detector_t *detector, const unsigned char *dat
                 }
             }
             if (found) {
-                MB_LOG_INFO("XMODEM text trigger detected: remote is sending");
+                printf("[%s][INFO] XMODEM text trigger detected: remote is sending\r\n", otelnet_get_timestamp()); fflush(stdout);
                 if (is_receive_init) *is_receive_init = true;
                 detector->buf_len = 0;  /* Clear buffer */
                 return true;
@@ -1455,7 +1506,7 @@ bool xmodem_detect_trigger(xmodem_detector_t *detector, const unsigned char *dat
                 }
             }
             if (found) {
-                MB_LOG_INFO("XMODEM send trigger detected: remote is sending");
+                printf("[%s][INFO] XMODEM send trigger detected: remote is sending\r\n", otelnet_get_timestamp()); fflush(stdout);
                 if (is_receive_init) *is_receive_init = true;
                 detector->buf_len = 0;  /* Clear buffer */
                 return true;
@@ -1482,7 +1533,7 @@ bool xmodem_detect_trigger(xmodem_detector_t *detector, const unsigned char *dat
                     time_t elapsed = now - detector->first_seen;
                     if (elapsed <= XMODEM_YMODEM_DETECT_WINDOW) {
                         /* Pattern detected! Remote is ready to receive */
-                        MB_LOG_INFO("XMODEM NAK/C trigger detected: remote is receiving");
+                        printf("[%s][INFO] XMODEM NAK/C trigger detected: remote is receiving\r\n", otelnet_get_timestamp()); fflush(stdout);
                         if (is_send_init) *is_send_init = true;
 
                         /* Reset detector */
@@ -1601,7 +1652,7 @@ bool ymodem_detect_trigger(ymodem_detector_t *detector, const unsigned char *dat
                 }
             }
             if (found) {
-                MB_LOG_INFO("YMODEM text trigger detected: remote is sending");
+                printf("[%s][INFO] YMODEM text trigger detected: remote is sending\r\n", otelnet_get_timestamp()); fflush(stdout);
                 if (is_receive_init) *is_receive_init = true;
                 detector->buf_len = 0;  /* Clear buffer */
                 return true;
@@ -1626,7 +1677,7 @@ bool ymodem_detect_trigger(ymodem_detector_t *detector, const unsigned char *dat
                 }
             }
             if (found) {
-                MB_LOG_INFO("YMODEM send trigger detected: remote is sending");
+                printf("[%s][INFO] YMODEM send trigger detected: remote is sending\r\n", otelnet_get_timestamp()); fflush(stdout);
                 if (is_receive_init) *is_receive_init = true;
                 detector->buf_len = 0;  /* Clear buffer */
                 return true;
@@ -1655,7 +1706,7 @@ bool ymodem_detect_trigger(ymodem_detector_t *detector, const unsigned char *dat
                 time_t elapsed = now - detector->first_seen;
                 if (elapsed <= XMODEM_YMODEM_DETECT_WINDOW) {
                     /* Pattern detected! Remote is ready to receive */
-                    MB_LOG_INFO("YMODEM 'C' trigger detected: remote is receiving");
+                    printf("[%s][INFO] YMODEM 'C' trigger detected: remote is receiving\r\n", otelnet_get_timestamp()); fflush(stdout);
                     if (is_send_init) *is_send_init = true;
 
                     /* Reset detector */

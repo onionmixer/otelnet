@@ -335,7 +335,7 @@ logeventf(telnet->logctx, "client subnegotiation: SB TSPEED IS %s", termspeed);
 log_option(telnet, "server", cmd, option);
 ```
 
-**otelnet**: Basic MB_LOG_INFO/DEBUG logging
+**otelnet**: Basic printf() logging for debugging
 
 **Impact**: **LOW** - otelnet has adequate logging for debugging
 

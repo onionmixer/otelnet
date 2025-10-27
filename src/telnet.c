@@ -40,7 +40,9 @@ void telnet_init(telnet_t *tn)
     /* Set default terminal speed (RFC 1079) */
     SAFE_STRNCPY(tn->terminal_speed, "38400,38400", sizeof(tn->terminal_speed));
 
-    MB_LOG_DEBUG("Telnet initialized");
+    #ifdef DEBUG
+    printf("[DEBUG] %s:%d: Telnet initialized\r\n", __FILE__, __LINE__); fflush(stdout);
+#endif
 }
 
 /**
@@ -52,21 +54,21 @@ int telnet_connect(telnet_t *tn, const char *host, int port)
     struct hostent *he;
 
     if (tn == NULL || host == NULL) {
-        MB_LOG_ERROR("Invalid arguments to telnet_connect");
+        fprintf(stderr, "[%s][ERROR] %s:%d: Invalid arguments to telnet_connect\r\n", otelnet_get_timestamp(), __FILE__, __LINE__);
         return ERROR_INVALID_ARG;
     }
 
     if (tn->is_connected) {
-        MB_LOG_WARNING("Already connected, disconnecting first");
+        fprintf(stderr, "[%s][WARNING] Already connected, disconnecting first\r\n", otelnet_get_timestamp());
         telnet_disconnect(tn);
     }
 
-    MB_LOG_INFO("Connecting to telnet server: %s:%d", host, port);
+    printf("[%s][INFO] Connecting to telnet server: %s:%d\r\n", otelnet_get_timestamp(), host, port); fflush(stdout);
 
     /* Create socket */
     tn->fd = socket(AF_INET, SOCK_STREAM, 0);
     if (tn->fd < 0) {
-        MB_LOG_ERROR("Failed to create socket: %s", strerror(errno));
+        fprintf(stderr, "[%s][ERROR] %s:%d: Failed to create socket: %s\r\n", otelnet_get_timestamp(), __FILE__, __LINE__, strerror(errno));
         return ERROR_CONNECTION;
     }
 
@@ -79,7 +81,7 @@ int telnet_connect(telnet_t *tn, const char *host, int port)
     /* Resolve hostname */
     he = gethostbyname(host);
     if (he == NULL) {
-        MB_LOG_ERROR("Failed to resolve host: %s", host);
+        fprintf(stderr, "[%s][ERROR] %s:%d: Failed to resolve host: %s\r\n", otelnet_get_timestamp(), __FILE__, __LINE__, host);
         close(tn->fd);
         tn->fd = -1;
         return ERROR_CONNECTION;
@@ -94,7 +96,7 @@ int telnet_connect(telnet_t *tn, const char *host, int port)
     /* Connect to server */
     if (connect(tn->fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
         if (errno != EINPROGRESS) {
-            MB_LOG_ERROR("Failed to connect: %s", strerror(errno));
+            fprintf(stderr, "[%s][ERROR] %s:%d: Failed to connect: %s\r\n", otelnet_get_timestamp(), __FILE__, __LINE__, strerror(errno));
             close(tn->fd);
             tn->fd = -1;
             return ERROR_CONNECTION;
@@ -107,7 +109,7 @@ int telnet_connect(telnet_t *tn, const char *host, int port)
     tn->port = port;
     tn->is_connected = true;
 
-    MB_LOG_INFO("Connected to telnet server");
+    printf("[%s][INFO] Connected to telnet server\r\n", otelnet_get_timestamp()); fflush(stdout);
 
     /* Send initial option negotiations */
     telnet_send_negotiate(tn, TELNET_WILL, TELOPT_BINARY);
@@ -146,7 +148,7 @@ int telnet_disconnect(telnet_t *tn)
         return SUCCESS;
     }
 
-    MB_LOG_INFO("Disconnecting from telnet server: %s:%d", tn->host, tn->port);
+    printf("[%s][INFO] Disconnecting from telnet server: %s:%d\r\n", otelnet_get_timestamp(), tn->host, tn->port); fflush(stdout);
 
     close(tn->fd);
     tn->fd = -1;
@@ -156,7 +158,7 @@ int telnet_disconnect(telnet_t *tn)
     tn->state = TELNET_STATE_DATA;
     tn->sb_len = 0;
 
-    MB_LOG_INFO("Telnet disconnected");
+    printf("[%s][INFO] Telnet disconnected\r\n", otelnet_get_timestamp()); fflush(stdout);
 
     return SUCCESS;
 }
@@ -175,11 +177,13 @@ int telnet_send_command(telnet_t *tn, unsigned char command)
     buf[0] = TELNET_IAC;
     buf[1] = command;
 
-    MB_LOG_DEBUG("Sending IAC command: %d", command);
+    #ifdef DEBUG
+    printf("[DEBUG] %s:%d: Sending IAC command: %d\r\n", __FILE__, __LINE__, command); fflush(stdout);
+#endif
 
     if (send(tn->fd, buf, 2, 0) < 0) {
         if (errno != EAGAIN && errno != EWOULDBLOCK) {
-            MB_LOG_ERROR("Failed to send IAC command: %s", strerror(errno));
+            fprintf(stderr, "[%s][ERROR] %s:%d: Failed to send IAC command: %s\r\n", otelnet_get_timestamp(), __FILE__, __LINE__, strerror(errno));
             return ERROR_IO;
         }
     }
@@ -202,11 +206,13 @@ int telnet_send_negotiate(telnet_t *tn, unsigned char command, unsigned char opt
     buf[1] = command;
     buf[2] = option;
 
-    MB_LOG_DEBUG("Sending IAC negotiation: %d %d", command, option);
+    #ifdef DEBUG
+    printf("[DEBUG] %s:%d: Sending IAC negotiation: %d %d\r\n", __FILE__, __LINE__, command, option); fflush(stdout);
+#endif
 
     if (send(tn->fd, buf, 3, 0) < 0) {
         if (errno != EAGAIN && errno != EWOULDBLOCK) {
-            MB_LOG_ERROR("Failed to send negotiation: %s", strerror(errno));
+            fprintf(stderr, "[%s][ERROR] %s:%d: Failed to send negotiation: %s\r\n", otelnet_get_timestamp(), __FILE__, __LINE__, strerror(errno));
             return ERROR_IO;
         }
     }
@@ -241,13 +247,13 @@ static void telnet_update_mode(telnet_t *tn)
         /* Character mode - server handles echo */
         tn->linemode = false;
         if (old_linemode != tn->linemode) {
-            MB_LOG_INFO("Telnet mode: CHARACTER MODE (server echo, SGA enabled)");
+            printf("[%s][INFO] Telnet mode: CHARACTER MODE (server echo, SGA enabled)\r\n", otelnet_get_timestamp()); fflush(stdout);
         }
     } else {
         /* Line mode - client handles echo */
         tn->linemode = true;
         if (old_linemode != tn->linemode) {
-            MB_LOG_INFO("Telnet mode: LINE MODE (client echo)");
+            printf("[%s][INFO] Telnet mode: LINE MODE (client echo)\r\n", otelnet_get_timestamp()); fflush(stdout);
         }
     }
 }
@@ -261,7 +267,9 @@ int telnet_handle_negotiate(telnet_t *tn, unsigned char command, unsigned char o
         return ERROR_INVALID_ARG;
     }
 
-    MB_LOG_DEBUG("Received IAC negotiation: cmd=%d opt=%d", command, option);
+    #ifdef DEBUG
+    printf("[DEBUG] %s:%d: Received IAC negotiation: cmd=%d opt=%d\r\n", __FILE__, __LINE__, command, option); fflush(stdout);
+#endif
 
     switch (command) {
         case TELNET_WILL:
@@ -273,18 +281,20 @@ int telnet_handle_negotiate(telnet_t *tn, unsigned char command, unsigned char o
 
                     if (option == TELOPT_BINARY) {
                         tn->binary_remote = true;
-                        MB_LOG_INFO("Remote BINARY mode enabled");
+                        printf("[%s][INFO] Remote BINARY mode enabled\r\n", otelnet_get_timestamp()); fflush(stdout);
                     } else if (option == TELOPT_SGA) {
                         tn->sga_remote = true;
-                        MB_LOG_INFO("Remote SGA enabled");
+                        printf("[%s][INFO] Remote SGA enabled\r\n", otelnet_get_timestamp()); fflush(stdout);
                     } else if (option == TELOPT_ECHO) {
                         tn->echo_remote = true;
-                        MB_LOG_INFO("Remote ECHO enabled");
+                        printf("[%s][INFO] Remote ECHO enabled\r\n", otelnet_get_timestamp()); fflush(stdout);
                     }
                 }
             } else {
                 /* Reject unsupported options - send DONT (RFC 855) */
-                MB_LOG_DEBUG("Rejecting unsupported option WILL %d", option);
+                #ifdef DEBUG
+    printf("[DEBUG] %s:%d: Rejecting unsupported option WILL %d\r\n", __FILE__, __LINE__, option); fflush(stdout);
+#endif
                 telnet_send_negotiate(tn, TELNET_DONT, option);
                 /* Note: remote_options[option] remains false (not supported) */
             }
@@ -299,7 +309,7 @@ int telnet_handle_negotiate(telnet_t *tn, unsigned char command, unsigned char o
 
                 if (option == TELOPT_BINARY) {
                     tn->binary_remote = false;
-                    MB_LOG_WARNING("Server rejected BINARY mode - multibyte characters (UTF-8, EUC-KR) may be corrupted!");
+                    fprintf(stderr, "[%s][WARNING] Server rejected BINARY mode - multibyte characters (UTF-8, EUC-KR) may be corrupted!\r\n", otelnet_get_timestamp());
                 } else if (option == TELOPT_SGA) {
                     tn->sga_remote = false;
                 } else if (option == TELOPT_ECHO) {
@@ -323,32 +333,43 @@ int telnet_handle_negotiate(telnet_t *tn, unsigned char command, unsigned char o
 
                     if (option == TELOPT_BINARY) {
                         tn->binary_local = true;
-                        MB_LOG_INFO("Local BINARY mode enabled");
+                        printf("[%s][INFO] Local BINARY mode enabled\r\n", otelnet_get_timestamp()); fflush(stdout);
                     } else if (option == TELOPT_SGA) {
                         tn->sga_local = true;
-                        MB_LOG_INFO("Local SGA enabled");
+                        printf("[%s][INFO] Local SGA enabled\r\n", otelnet_get_timestamp()); fflush(stdout);
                     } else if (option == TELOPT_TTYPE) {
-                        MB_LOG_INFO("TERMINAL-TYPE negotiation accepted");
+                        printf("[%s][INFO] TERMINAL-TYPE negotiation accepted\r\n", otelnet_get_timestamp()); fflush(stdout);
                         /* Server will send SB TTYPE SEND to request type */
                     } else if (option == TELOPT_NAWS) {
-                        MB_LOG_INFO("NAWS negotiation accepted");
+                        printf("[%s][INFO] NAWS negotiation accepted\r\n", otelnet_get_timestamp()); fflush(stdout);
                         /* Send initial window size */
                         telnet_send_naws(tn, tn->term_width, tn->term_height);
                     } else if (option == TELOPT_TSPEED) {
-                        MB_LOG_INFO("TSPEED negotiation accepted");
+                        printf("[%s][INFO] TSPEED negotiation accepted\r\n", otelnet_get_timestamp()); fflush(stdout);
                         /* Server will send SB TSPEED SEND to request speed */
                     } else if (option == TELOPT_ENVIRON) {
-                        MB_LOG_INFO("ENVIRON negotiation accepted");
+                        printf("[%s][INFO] ENVIRON negotiation accepted\r\n", otelnet_get_timestamp()); fflush(stdout);
                         /* Server will send SB ENVIRON SEND to request variables */
                     } else if (option == TELOPT_LINEMODE) {
                         tn->linemode_active = true;
-                        MB_LOG_INFO("LINEMODE negotiation accepted");
+                        printf("[%s][INFO] LINEMODE negotiation accepted\r\n", otelnet_get_timestamp()); fflush(stdout);
                         /* Server may send MODE subnegotiation */
+                    }
+                } else {
+                    /* Option already enabled - just update status flags (no protocol exchange) */
+                    if (option == TELOPT_BINARY && !tn->binary_local) {
+                        tn->binary_local = true;
+                        printf("[%s][INFO] Local BINARY mode confirmed by server\r\n", otelnet_get_timestamp()); fflush(stdout);
+                    } else if (option == TELOPT_SGA && !tn->sga_local) {
+                        tn->sga_local = true;
+                        printf("[%s][INFO] Local SGA confirmed by server\r\n", otelnet_get_timestamp()); fflush(stdout);
                     }
                 }
             } else {
                 /* Reject unsupported options - send WONT (RFC 855) */
-                MB_LOG_DEBUG("Rejecting unsupported option DO %d", option);
+                #ifdef DEBUG
+    printf("[DEBUG] %s:%d: Rejecting unsupported option DO %d\r\n", __FILE__, __LINE__, option); fflush(stdout);
+#endif
                 telnet_send_negotiate(tn, TELNET_WONT, option);
                 /* Note: local_options[option] remains false (not supported) */
             }
@@ -363,7 +384,7 @@ int telnet_handle_negotiate(telnet_t *tn, unsigned char command, unsigned char o
 
                 if (option == TELOPT_BINARY) {
                     tn->binary_local = false;
-                    MB_LOG_WARNING("Server rejected local BINARY mode - multibyte characters may be corrupted on send!");
+                    fprintf(stderr, "[%s][WARNING] Server rejected local BINARY mode - multibyte characters may be corrupted on send!\r\n", otelnet_get_timestamp());
                 } else if (option == TELOPT_SGA) {
                     tn->sga_local = false;
                 } else if (option == TELOPT_LINEMODE) {
@@ -374,7 +395,7 @@ int telnet_handle_negotiate(telnet_t *tn, unsigned char command, unsigned char o
             break;
 
         default:
-            MB_LOG_WARNING("Unknown negotiation command: %d", command);
+            fprintf(stderr, "[%s][WARNING] Unknown negotiation command: %d\r\n", otelnet_get_timestamp(), command);
             break;
     }
 
@@ -410,11 +431,13 @@ static int telnet_send_subnegotiation(telnet_t *tn, const unsigned char *data, s
     buf[pos++] = TELNET_IAC;
     buf[pos++] = TELNET_SE;
 
-    MB_LOG_DEBUG("Sending subnegotiation: %zu bytes", pos);
+    #ifdef DEBUG
+    printf("[DEBUG] %s:%d: Sending subnegotiation: %zu bytes\r\n", __FILE__, __LINE__, pos); fflush(stdout);
+#endif
 
     if (send(tn->fd, buf, pos, 0) < 0) {
         if (errno != EAGAIN && errno != EWOULDBLOCK) {
-            MB_LOG_ERROR("Failed to send subnegotiation: %s", strerror(errno));
+            fprintf(stderr, "[%s][ERROR] %s:%d: Failed to send subnegotiation: %s\r\n", otelnet_get_timestamp(), __FILE__, __LINE__, strerror(errno));
             return ERROR_IO;
         }
     }
@@ -443,7 +466,7 @@ int telnet_send_naws(telnet_t *tn, int width, int height)
     data[3] = (unsigned char)((height >> 8) & 0xFF);  /* Height high byte */
     data[4] = (unsigned char)(height & 0xFF);          /* Height low byte */
 
-    MB_LOG_INFO("Sending NAWS: %dx%d", width, height);
+    printf("[%s][INFO] Sending NAWS: %dx%d\r\n", otelnet_get_timestamp(), width, height); fflush(stdout);
 
     return telnet_send_subnegotiation(tn, data, 5);
 }
@@ -459,7 +482,9 @@ int telnet_handle_subnegotiation(telnet_t *tn)
 
     unsigned char option = tn->sb_buffer[0];
 
-    MB_LOG_DEBUG("Received subnegotiation for option %d, length %zu", (int)option, tn->sb_len);
+    #ifdef DEBUG
+    printf("[DEBUG] %s:%d: Received subnegotiation for option %d, length %zu\r\n", __FILE__, __LINE__, (int)option, tn->sb_len); fflush(stdout);
+#endif
 
     switch (option) {
         case TELOPT_TTYPE:
@@ -483,7 +508,7 @@ int telnet_handle_subnegotiation(telnet_t *tn)
                 response[1] = TTYPE_IS;
                 memcpy(&response[2], tn->terminal_type, term_len);
 
-                MB_LOG_INFO("Sending TERMINAL-TYPE IS %s (cycle %d)", tn->terminal_type, tn->ttype_index);
+                printf("[%s][INFO] Sending TERMINAL-TYPE IS %s (cycle %d)\r\n", otelnet_get_timestamp(), tn->terminal_type, tn->ttype_index); fflush(stdout);
                 telnet_send_subnegotiation(tn, response, 2 + term_len);
 
                 /* Advance to next type for next request */
@@ -505,7 +530,7 @@ int telnet_handle_subnegotiation(telnet_t *tn)
                 response[1] = TTYPE_IS;  /* IS = 0 */
                 memcpy(&response[2], tn->terminal_speed, speed_len);
 
-                MB_LOG_INFO("Sending TSPEED IS %s", tn->terminal_speed);
+                printf("[%s][INFO] Sending TSPEED IS %s\r\n", otelnet_get_timestamp(), tn->terminal_speed); fflush(stdout);
                 telnet_send_subnegotiation(tn, response, 2 + speed_len);
             }
             break;
@@ -534,7 +559,9 @@ int telnet_handle_subnegotiation(telnet_t *tn)
                     memcpy(&response[pos], user, user_len);
                     pos += user_len;
 
-                    MB_LOG_DEBUG("Sending ENVIRON: USER=%s", user);
+                    #ifdef DEBUG
+    printf("[DEBUG] %s:%d: Sending ENVIRON: USER=%s\r\n", __FILE__, __LINE__, user); fflush(stdout);
+#endif
                 }
 
                 /* Send DISPLAY variable if available (for X11) */
@@ -551,14 +578,16 @@ int telnet_handle_subnegotiation(telnet_t *tn)
                     memcpy(&response[pos], display, display_len);
                     pos += display_len;
 
-                    MB_LOG_DEBUG("Sending ENVIRON: DISPLAY=%s", display);
+                    #ifdef DEBUG
+    printf("[DEBUG] %s:%d: Sending ENVIRON: DISPLAY=%s\r\n", __FILE__, __LINE__, display); fflush(stdout);
+#endif
                 }
 
                 if (pos > 2) {  /* If we added any variables */
-                    MB_LOG_INFO("Sending ENVIRON IS with %zu bytes", pos);
+                    printf("[%s][INFO] Sending ENVIRON IS with %zu bytes\r\n", otelnet_get_timestamp(), pos); fflush(stdout);
                     telnet_send_subnegotiation(tn, response, pos);
                 } else {
-                    MB_LOG_INFO("No environment variables to send");
+                    printf("[%s][INFO] No environment variables to send\r\n", otelnet_get_timestamp()); fflush(stdout);
                 }
             }
             break;
@@ -573,9 +602,8 @@ int telnet_handle_subnegotiation(telnet_t *tn)
 
                     tn->linemode_edit = (mode & MODE_EDIT) != 0;
 
-                    MB_LOG_INFO("LINEMODE MODE: EDIT=%s TRAPSIG=%s",
-                               (mode & MODE_EDIT) ? "yes" : "no",
-                               (mode & MODE_TRAPSIG) ? "yes" : "no");
+                    printf("[%s][INFO] LINEMODE MODE: EDIT=%s TRAPSIG=%s\r\n", otelnet_get_timestamp(), (mode & MODE_EDIT) ? "yes" : "no",
+                               (mode & MODE_TRAPSIG) ? "yes" : "no"); fflush(stdout);
 
                     /* Send ACK if MODE_ACK bit is set (RFC 1184 mode synchronization) */
                     if (mode & MODE_ACK) {
@@ -584,7 +612,9 @@ int telnet_handle_subnegotiation(telnet_t *tn)
                         response[1] = LM_MODE;
                         response[2] = mode;  /* Echo back the same mode */
 
-                        MB_LOG_DEBUG("Sending LINEMODE MODE ACK");
+                        #ifdef DEBUG
+    printf("[DEBUG] %s:%d: Sending LINEMODE MODE ACK\r\n", __FILE__, __LINE__); fflush(stdout);
+#endif
                         telnet_send_subnegotiation(tn, response, 3);
                     }
 
@@ -595,16 +625,22 @@ int telnet_handle_subnegotiation(telnet_t *tn)
                 }
             } else if (tn->sb_len >= 2 && tn->sb_buffer[1] == LM_FORWARDMASK) {
                 /* FORWARDMASK - acknowledge but don't implement for now */
-                MB_LOG_DEBUG("Received LINEMODE FORWARDMASK (not implemented)");
+                #ifdef DEBUG
+    printf("[DEBUG] %s:%d: Received LINEMODE FORWARDMASK (not implemented)\r\n", __FILE__, __LINE__); fflush(stdout);
+#endif
             } else if (tn->sb_len >= 2 && tn->sb_buffer[1] == LM_SLC) {
                 /* SLC (Set Local Characters) - acknowledge but don't implement for now */
-                MB_LOG_DEBUG("Received LINEMODE SLC (not implemented)");
+                #ifdef DEBUG
+    printf("[DEBUG] %s:%d: Received LINEMODE SLC (not implemented)\r\n", __FILE__, __LINE__); fflush(stdout);
+#endif
             }
             break;
 
         default:
             /* Unknown option - just log and ignore */
-            MB_LOG_DEBUG("Ignoring subnegotiation for unsupported option %d", option);
+            #ifdef DEBUG
+    printf("[DEBUG] %s:%d: Ignoring subnegotiation for unsupported option %d\r\n", __FILE__, __LINE__, option); fflush(stdout);
+#endif
             break;
     }
 
@@ -643,7 +679,7 @@ int telnet_process_input(telnet_t *tn, const unsigned char *input, size_t input_
                         /* Buffer full - log warning once */
                         static bool overflow_warned = false;
                         if (!overflow_warned) {
-                            MB_LOG_WARNING("Telnet input buffer full - data may be truncated (multibyte chars may break)");
+                            fprintf(stderr, "[%s][WARNING] Telnet input buffer full - data may be truncated (multibyte chars may break)\r\n", otelnet_get_timestamp());
                             overflow_warned = true;
                         }
                     }
@@ -670,49 +706,63 @@ int telnet_process_input(telnet_t *tn, const unsigned char *input, size_t input_
                     tn->sb_len = 0;
                 } else if (c == TELNET_GA) {
                     /* Go Ahead - silently ignore in character mode (RFC 858) */
-                    MB_LOG_DEBUG("Received IAC GA (ignored)");
+                    #ifdef DEBUG
+    printf("[DEBUG] %s:%d: Received IAC GA (ignored)\r\n", __FILE__, __LINE__); fflush(stdout);
+#endif
                     tn->state = TELNET_STATE_DATA;
                 } else if (c == TELNET_NOP) {
                     /* No Operation - silently ignore (RFC 854) */
-                    MB_LOG_DEBUG("Received IAC NOP");
+                    #ifdef DEBUG
+    printf("[DEBUG] %s:%d: Received IAC NOP\r\n", __FILE__, __LINE__); fflush(stdout);
+#endif
                     tn->state = TELNET_STATE_DATA;
                 } else if (c == TELNET_AYT) {
                     /* Are You There - respond with confirmation (RFC 854) */
-                    MB_LOG_DEBUG("Received IAC AYT");
+                    #ifdef DEBUG
+    printf("[DEBUG] %s:%d: Received IAC AYT\r\n", __FILE__, __LINE__); fflush(stdout);
+#endif
                     const char *response = "\r\n[ModemBridge: Yes, I'm here]\r\n";
                     telnet_send(tn, response, strlen(response));
                     tn->state = TELNET_STATE_DATA;
                 } else if (c == TELNET_IP) {
                     /* Interrupt Process - log but don't act (RFC 854) */
-                    MB_LOG_INFO("Received IAC IP (Interrupt Process)");
+                    printf("[%s][INFO] Received IAC IP (Interrupt Process)\r\n", otelnet_get_timestamp()); fflush(stdout);
                     tn->state = TELNET_STATE_DATA;
                 } else if (c == TELNET_AO) {
                     /* Abort Output - log but don't act (RFC 854) */
-                    MB_LOG_INFO("Received IAC AO (Abort Output)");
+                    printf("[%s][INFO] Received IAC AO (Abort Output)\r\n", otelnet_get_timestamp()); fflush(stdout);
                     tn->state = TELNET_STATE_DATA;
                 } else if (c == TELNET_BREAK) {
                     /* Break - log but don't act (RFC 854) */
-                    MB_LOG_INFO("Received IAC BREAK");
+                    printf("[%s][INFO] Received IAC BREAK\r\n", otelnet_get_timestamp()); fflush(stdout);
                     tn->state = TELNET_STATE_DATA;
                 } else if (c == TELNET_EL) {
                     /* Erase Line - log but don't act (RFC 854) */
-                    MB_LOG_DEBUG("Received IAC EL (Erase Line)");
+                    #ifdef DEBUG
+    printf("[DEBUG] %s:%d: Received IAC EL (Erase Line)\r\n", __FILE__, __LINE__); fflush(stdout);
+#endif
                     tn->state = TELNET_STATE_DATA;
                 } else if (c == TELNET_EC) {
                     /* Erase Character - log but don't act (RFC 854) */
-                    MB_LOG_DEBUG("Received IAC EC (Erase Character)");
+                    #ifdef DEBUG
+    printf("[DEBUG] %s:%d: Received IAC EC (Erase Character)\r\n", __FILE__, __LINE__); fflush(stdout);
+#endif
                     tn->state = TELNET_STATE_DATA;
                 } else if (c == TELNET_DM) {
                     /* Data Mark - marks end of urgent data (RFC 854) */
-                    MB_LOG_DEBUG("Received IAC DM (Data Mark)");
+                    #ifdef DEBUG
+    printf("[DEBUG] %s:%d: Received IAC DM (Data Mark)\r\n", __FILE__, __LINE__); fflush(stdout);
+#endif
                     tn->state = TELNET_STATE_DATA;
                 } else if (c == TELNET_EOR) {
                     /* End of Record - log but don't act (RFC 885) */
-                    MB_LOG_DEBUG("Received IAC EOR (End of Record)");
+                    #ifdef DEBUG
+    printf("[DEBUG] %s:%d: Received IAC EOR (End of Record)\r\n", __FILE__, __LINE__); fflush(stdout);
+#endif
                     tn->state = TELNET_STATE_DATA;
                 } else {
                     /* Unknown IAC command - log and ignore */
-                    MB_LOG_WARNING("Received unknown IAC command: %d", c);
+                    fprintf(stderr, "[%s][WARNING] Received unknown IAC command: %d\r\n", otelnet_get_timestamp(), c);
                     tn->state = TELNET_STATE_DATA;
                 }
                 break;
@@ -779,7 +829,9 @@ int telnet_process_input(telnet_t *tn, const unsigned char *input, size_t input_
                     if (out_pos < output_size) {
                         output[out_pos++] = '\r';
                     }
-                    MB_LOG_DEBUG("Received CR NUL (carriage return only)");
+                    #ifdef DEBUG
+    printf("[DEBUG] %s:%d: Received CR NUL (carriage return only)\r\n", __FILE__, __LINE__); fflush(stdout);
+#endif
                 } else if (c == '\n') {
                     /* CR LF - output CR LF (newline) */
                     if (out_pos + 1 < output_size) {
@@ -789,7 +841,9 @@ int telnet_process_input(telnet_t *tn, const unsigned char *input, size_t input_
                         /* Only room for CR */
                         output[out_pos++] = '\r';
                     }
-                    MB_LOG_DEBUG("Received CR LF (newline)");
+                    #ifdef DEBUG
+    printf("[DEBUG] %s:%d: Received CR LF (newline)\r\n", __FILE__, __LINE__); fflush(stdout);
+#endif
                 } else if (c == TELNET_IAC) {
                     /* CR IAC - output CR and process IAC */
                     if (out_pos < output_size) {
@@ -805,13 +859,15 @@ int telnet_process_input(telnet_t *tn, const unsigned char *input, size_t input_
                     if (out_pos < output_size) {
                         output[out_pos++] = c;
                     }
-                    MB_LOG_DEBUG("Received CR followed by 0x%02x (non-standard)", c);
+                    #ifdef DEBUG
+    printf("[DEBUG] %s:%d: Received CR followed by 0x%02x (non-standard)\r\n", __FILE__, __LINE__, c); fflush(stdout);
+#endif
                 }
                 tn->state = TELNET_STATE_DATA;
                 break;
 
             default:
-                MB_LOG_WARNING("Invalid telnet state: %d", tn->state);
+                fprintf(stderr, "[%s][WARNING] Invalid telnet state: %d\r\n", otelnet_get_timestamp(), tn->state);
                 tn->state = TELNET_STATE_DATA;
                 break;
         }
@@ -820,7 +876,9 @@ int telnet_process_input(telnet_t *tn, const unsigned char *input, size_t input_
     *output_len = out_pos;
 
     if (out_pos > 0) {
-        MB_LOG_DEBUG("Telnet processed %zu bytes -> %zu bytes", input_len, out_pos);
+        #ifdef DEBUG
+    printf("[DEBUG] %s:%d: Telnet processed %zu bytes -> %zu bytes\r\n", __FILE__, __LINE__, input_len, out_pos); fflush(stdout);
+#endif
     }
 
     return SUCCESS;
@@ -868,12 +926,13 @@ int telnet_prepare_output(telnet_t *tn, const unsigned char *input, size_t input
 
     /* Warn if not all input was processed */
     if (i < input_len) {
-        MB_LOG_WARNING("Telnet output buffer full - %zu of %zu bytes not processed (multibyte chars may break)",
-                      input_len - i, input_len);
+        fprintf(stderr, "[%s][WARNING] Telnet output buffer full - %zu of %zu bytes not processed (multibyte chars may break)\r\n", otelnet_get_timestamp(), input_len - i, input_len);
     }
 
     if (out_pos > 0) {
-        MB_LOG_DEBUG("Telnet prepared %zu bytes -> %zu bytes", input_len, out_pos);
+        #ifdef DEBUG
+    printf("[DEBUG] %s:%d: Telnet prepared %zu bytes -> %zu bytes\r\n", __FILE__, __LINE__, input_len, out_pos); fflush(stdout);
+#endif
     }
 
     return SUCCESS;
@@ -894,7 +953,9 @@ ssize_t telnet_send(telnet_t *tn, const void *data, size_t len)
         return ERROR_CONNECTION;
     }
 
-    MB_LOG_DEBUG("Telnet sending %zu bytes", len);
+    #ifdef DEBUG
+    printf("[DEBUG] %s:%d: Telnet sending %zu bytes\r\n", __FILE__, __LINE__, len); fflush(stdout);
+#endif
 
     sent = send(tn->fd, data, len, 0);
     if (sent < 0) {
@@ -902,7 +963,7 @@ ssize_t telnet_send(telnet_t *tn, const void *data, size_t len)
             /* Would block */
             return 0;
         }
-        MB_LOG_ERROR("Telnet send error: %s", strerror(errno));
+        fprintf(stderr, "[%s][ERROR] %s:%d: Telnet send error: %s\r\n", otelnet_get_timestamp(), __FILE__, __LINE__, strerror(errno));
         return ERROR_IO;
     }
 
@@ -930,18 +991,20 @@ ssize_t telnet_recv(telnet_t *tn, void *buffer, size_t size)
             /* No data available */
             return 0;
         }
-        MB_LOG_ERROR("Telnet recv error: %s", strerror(errno));
+        fprintf(stderr, "[%s][ERROR] %s:%d: Telnet recv error: %s\r\n", otelnet_get_timestamp(), __FILE__, __LINE__, strerror(errno));
         return ERROR_IO;
     }
 
     if (n == 0) {
         /* Connection closed */
-        MB_LOG_INFO("Telnet connection closed by server");
+        printf("[%s][INFO] Telnet connection closed by server\r\n", otelnet_get_timestamp()); fflush(stdout);
         tn->is_connected = false;
         return 0;
     }
 
-    MB_LOG_DEBUG("Telnet received %zd bytes", n);
+    #ifdef DEBUG
+    printf("[DEBUG] %s:%d: Telnet received %zd bytes\r\n", __FILE__, __LINE__, n); fflush(stdout);
+#endif
 
     return n;
 }
@@ -1028,13 +1091,16 @@ void telnet_debug_print_mode(telnet_t *tn, const char *prefix)
         binary_str = "NORMAL MODE (7-bit ASCII)";
     }
 
-    MB_LOG_DEBUG("%s: Telnet mode: %s, Binary mode: %s", prefix, mode_str, binary_str);
-    MB_LOG_DEBUG("%s: State details - BINARY(L=%d,R=%d) ECHO(L=%d,R=%d) SGA(L=%d,R=%d) LINEMODE=%d",
-                 prefix,
+    #ifdef DEBUG
+    printf("[DEBUG] %s:%d: %s: Telnet mode: %s, Binary mode: %s\r\n", __FILE__, __LINE__, prefix, mode_str, binary_str); fflush(stdout);
+#endif
+    #ifdef DEBUG
+    printf("[DEBUG] %s:%d: %s: State details - BINARY(L=%d,R=%d) ECHO(L=%d,R=%d) SGA(L=%d,R=%d) LINEMODE=%d\r\n", __FILE__, __LINE__, prefix,
                  tn->binary_local, tn->binary_remote,
                  tn->echo_local, tn->echo_remote,
                  tn->sga_local, tn->sga_remote,
-                 tn->linemode_active);
+                 tn->linemode_active); fflush(stdout);
+#endif
 #else
     /* Suppress unused parameter warning in non-DEBUG builds */
     (void)tn;
@@ -1067,17 +1133,17 @@ int telnet_save_state(telnet_t *tn,
     *saved_sga_remote = tn->sga_remote;
     *saved_linemode_active = tn->linemode_active;
 
-    MB_LOG_INFO("Saved telnet state: BINARY(L=%d,R=%d) ECHO(L=%d,R=%d) SGA(L=%d,R=%d) LINEMODE=%d",
-                *saved_binary_local, *saved_binary_remote,
+    printf("[%s][INFO] Saved telnet state: BINARY(L=%d,R=%d) ECHO(L=%d,R=%d) SGA(L=%d,R=%d) LINEMODE=%d\r\n", otelnet_get_timestamp(), *saved_binary_local, *saved_binary_remote,
                 *saved_echo_local, *saved_echo_remote,
                 *saved_sga_local, *saved_sga_remote,
-                *saved_linemode_active);
+                *saved_linemode_active); fflush(stdout);
 
     return SUCCESS;
 }
 
 /**
  * Request BINARY mode for file transfers
+ * Also disables LINEMODE to ensure clean binary transmission
  */
 int telnet_request_binary_mode(telnet_t *tn)
 {
@@ -1085,16 +1151,26 @@ int telnet_request_binary_mode(telnet_t *tn)
         return ERROR_INVALID_ARG;
     }
 
-    MB_LOG_INFO("Requesting BINARY mode for file transfer");
+    printf("[%s][INFO] Requesting BINARY mode for file transfer\r\n", otelnet_get_timestamp()); fflush(stdout);
 
-    /* Request to send binary (WILL BINARY) only if not already enabled */
+    /* STEP 1: Disable LINEMODE before entering BINARY mode
+     * LINEMODE can cause CR->CRLF conversion which corrupts binary data
+     * Client sends DONT LINEMODE to server */
+    if (tn->remote_options[TELOPT_LINEMODE]) {
+        printf("[%s][INFO] Disabling LINEMODE for binary transfer (sending DONT LINEMODE)\r\n", otelnet_get_timestamp()); fflush(stdout);
+        telnet_send_negotiate(tn, TELNET_DONT, TELOPT_LINEMODE);
+        tn->remote_options[TELOPT_LINEMODE] = false;
+        tn->linemode_active = false;
+    }
+
+    /* STEP 2: Request to send binary (WILL BINARY) only if not already enabled */
     if (!tn->local_options[TELOPT_BINARY]) {
         telnet_send_negotiate(tn, TELNET_WILL, TELOPT_BINARY);
         tn->local_options[TELOPT_BINARY] = true;
         tn->binary_local = true;
     }
 
-    /* Request remote to send binary (DO BINARY) only if not already enabled */
+    /* STEP 3: Request remote to send binary (DO BINARY) only if not already enabled */
     if (!tn->remote_options[TELOPT_BINARY]) {
         telnet_send_negotiate(tn, TELNET_DO, TELOPT_BINARY);
         tn->remote_options[TELOPT_BINARY] = true;
@@ -1102,6 +1178,8 @@ int telnet_request_binary_mode(telnet_t *tn)
     }
 
     telnet_update_mode(tn);
+
+    printf("[%s][INFO] BINARY mode negotiation complete: LINEMODE=%d, BINARY(L=%d,R=%d)\r\n", otelnet_get_timestamp(), tn->linemode_active, tn->binary_local, tn->binary_remote); fflush(stdout);
 
     return SUCCESS;
 }
@@ -1120,20 +1198,19 @@ int telnet_restore_state(telnet_t *tn,
         return ERROR_INVALID_ARG;
     }
 
-    MB_LOG_INFO("Restoring telnet state: BINARY(L=%d,R=%d) ECHO(L=%d,R=%d) SGA(L=%d,R=%d) LINEMODE=%d",
-                saved_binary_local, saved_binary_remote,
+    printf("[%s][INFO] Restoring telnet state: BINARY(L=%d,R=%d) ECHO(L=%d,R=%d) SGA(L=%d,R=%d) LINEMODE=%d\r\n", otelnet_get_timestamp(), saved_binary_local, saved_binary_remote,
                 saved_echo_local, saved_echo_remote,
                 saved_sga_local, saved_sga_remote,
-                saved_linemode_active);
+                saved_linemode_active); fflush(stdout);
 
     /* Restore local BINARY mode state */
     if (saved_binary_local && !tn->binary_local) {
-        MB_LOG_INFO("Re-enabling local BINARY mode");
+        printf("[%s][INFO] Re-enabling local BINARY mode\r\n", otelnet_get_timestamp()); fflush(stdout);
         telnet_send_negotiate(tn, TELNET_WILL, TELOPT_BINARY);
         tn->local_options[TELOPT_BINARY] = true;
         tn->binary_local = true;
     } else if (!saved_binary_local && tn->binary_local) {
-        MB_LOG_INFO("Disabling local BINARY mode");
+        printf("[%s][INFO] Disabling local BINARY mode\r\n", otelnet_get_timestamp()); fflush(stdout);
         telnet_send_negotiate(tn, TELNET_WONT, TELOPT_BINARY);
         tn->local_options[TELOPT_BINARY] = false;
         tn->binary_local = false;
@@ -1141,12 +1218,12 @@ int telnet_restore_state(telnet_t *tn,
 
     /* Restore remote BINARY mode state */
     if (saved_binary_remote && !tn->binary_remote) {
-        MB_LOG_INFO("Re-requesting remote BINARY mode");
+        printf("[%s][INFO] Re-requesting remote BINARY mode\r\n", otelnet_get_timestamp()); fflush(stdout);
         telnet_send_negotiate(tn, TELNET_DO, TELOPT_BINARY);
         tn->remote_options[TELOPT_BINARY] = true;
         tn->binary_remote = true;
     } else if (!saved_binary_remote && tn->binary_remote) {
-        MB_LOG_INFO("Stopping remote BINARY mode");
+        printf("[%s][INFO] Stopping remote BINARY mode\r\n", otelnet_get_timestamp()); fflush(stdout);
         telnet_send_negotiate(tn, TELNET_DONT, TELOPT_BINARY);
         tn->remote_options[TELOPT_BINARY] = false;
         tn->binary_remote = false;
@@ -1154,12 +1231,12 @@ int telnet_restore_state(telnet_t *tn,
 
     /* Restore local ECHO mode state */
     if (saved_echo_local && !tn->echo_local) {
-        MB_LOG_INFO("Re-enabling local ECHO mode");
+        printf("[%s][INFO] Re-enabling local ECHO mode\r\n", otelnet_get_timestamp()); fflush(stdout);
         telnet_send_negotiate(tn, TELNET_WILL, TELOPT_ECHO);
         tn->local_options[TELOPT_ECHO] = true;
         tn->echo_local = true;
     } else if (!saved_echo_local && tn->echo_local) {
-        MB_LOG_INFO("Disabling local ECHO mode");
+        printf("[%s][INFO] Disabling local ECHO mode\r\n", otelnet_get_timestamp()); fflush(stdout);
         telnet_send_negotiate(tn, TELNET_WONT, TELOPT_ECHO);
         tn->local_options[TELOPT_ECHO] = false;
         tn->echo_local = false;
@@ -1167,12 +1244,12 @@ int telnet_restore_state(telnet_t *tn,
 
     /* Restore remote ECHO mode state */
     if (saved_echo_remote && !tn->echo_remote) {
-        MB_LOG_INFO("Re-requesting remote ECHO mode");
+        printf("[%s][INFO] Re-requesting remote ECHO mode\r\n", otelnet_get_timestamp()); fflush(stdout);
         telnet_send_negotiate(tn, TELNET_DO, TELOPT_ECHO);
         tn->remote_options[TELOPT_ECHO] = true;
         tn->echo_remote = true;
     } else if (!saved_echo_remote && tn->echo_remote) {
-        MB_LOG_INFO("Stopping remote ECHO mode");
+        printf("[%s][INFO] Stopping remote ECHO mode\r\n", otelnet_get_timestamp()); fflush(stdout);
         telnet_send_negotiate(tn, TELNET_DONT, TELOPT_ECHO);
         tn->remote_options[TELOPT_ECHO] = false;
         tn->echo_remote = false;
@@ -1180,12 +1257,12 @@ int telnet_restore_state(telnet_t *tn,
 
     /* Restore local SGA mode state */
     if (saved_sga_local && !tn->sga_local) {
-        MB_LOG_INFO("Re-enabling local SGA mode");
+        printf("[%s][INFO] Re-enabling local SGA mode\r\n", otelnet_get_timestamp()); fflush(stdout);
         telnet_send_negotiate(tn, TELNET_WILL, TELOPT_SGA);
         tn->local_options[TELOPT_SGA] = true;
         tn->sga_local = true;
     } else if (!saved_sga_local && tn->sga_local) {
-        MB_LOG_INFO("Disabling local SGA mode");
+        printf("[%s][INFO] Disabling local SGA mode\r\n", otelnet_get_timestamp()); fflush(stdout);
         telnet_send_negotiate(tn, TELNET_WONT, TELOPT_SGA);
         tn->local_options[TELOPT_SGA] = false;
         tn->sga_local = false;
@@ -1193,25 +1270,33 @@ int telnet_restore_state(telnet_t *tn,
 
     /* Restore remote SGA mode state */
     if (saved_sga_remote && !tn->sga_remote) {
-        MB_LOG_INFO("Re-requesting remote SGA mode");
+        printf("[%s][INFO] Re-requesting remote SGA mode\r\n", otelnet_get_timestamp()); fflush(stdout);
         telnet_send_negotiate(tn, TELNET_DO, TELOPT_SGA);
         tn->remote_options[TELOPT_SGA] = true;
         tn->sga_remote = true;
     } else if (!saved_sga_remote && tn->sga_remote) {
-        MB_LOG_INFO("Stopping remote SGA mode");
+        printf("[%s][INFO] Stopping remote SGA mode\r\n", otelnet_get_timestamp()); fflush(stdout);
         telnet_send_negotiate(tn, TELNET_DONT, TELOPT_SGA);
         tn->remote_options[TELOPT_SGA] = false;
         tn->sga_remote = false;
     }
 
-    /* Restore LINEMODE active state */
-    if (saved_linemode_active != tn->linemode_active) {
-        tn->linemode_active = saved_linemode_active;
-        MB_LOG_INFO("Restored LINEMODE active state: %d", saved_linemode_active);
+    /* Restore LINEMODE active state
+     * If LINEMODE was active before transfer, re-enable it by sending DO LINEMODE */
+    if (saved_linemode_active && !tn->linemode_active) {
+        printf("[%s][INFO] Re-enabling LINEMODE after binary transfer (sending DO LINEMODE)\r\n", otelnet_get_timestamp()); fflush(stdout);
+        telnet_send_negotiate(tn, TELNET_DO, TELOPT_LINEMODE);
+        tn->remote_options[TELOPT_LINEMODE] = true;
+        tn->linemode_active = true;
+    } else if (!saved_linemode_active && tn->linemode_active) {
+        printf("[%s][INFO] Keeping LINEMODE disabled (was disabled before transfer)\r\n", otelnet_get_timestamp()); fflush(stdout);
+        /* LINEMODE was disabled before transfer, keep it disabled */
     }
 
     /* Update calculated mode (char/line mode) based on restored states */
     telnet_update_mode(tn);
+
+    printf("[%s][INFO] Telnet state restoration complete: LINEMODE=%d, BINARY(L=%d,R=%d)\r\n", otelnet_get_timestamp(), tn->linemode_active, tn->binary_local, tn->binary_remote); fflush(stdout);
 
     return SUCCESS;
 }

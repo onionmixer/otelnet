@@ -7,22 +7,33 @@ CFLAGS = -Wall -Wextra -Werror -O2 -std=gnu11 -D_GNU_SOURCE
 LDFLAGS =
 LIBS =
 
+# ekermit feature flags
+# Enhanced features enabled:
+#   -DF_CRC: Enable CRC-16 block check (Type 3) for 99.998% error detection
+#   -DF_AT:  Enable Attribute packets for file metadata (size, date, permissions)
+#   -DNO_LP: Disable Long Packets (use standard packet size ~94 bytes)
+#   -DNO_SSW: Disable Sliding Windows (use stop-and-wait mode)
+KERMIT_FLAGS = -DF_CRC -DF_AT -DNO_LP -DNO_SSW
+
 # Directories
 SRC_DIR = src
 INC_DIR = include
 OBJ_DIR = obj
+EKERMIT_DIR = ekermit
 
 # Target executables
 TARGET = otelnet
 TARGET_STATIC = otelnet_static
 
 # Source files
-SOURCES = $(SRC_DIR)/otelnet.c $(SRC_DIR)/telnet.c $(SRC_DIR)/transfer.c
-OBJECTS = $(patsubst $(SRC_DIR)/%.c,$(OBJ_DIR)/%.o,$(SOURCES))
-OBJECTS_STATIC = $(patsubst $(SRC_DIR)/%.c,$(OBJ_DIR)/%-static.o,$(SOURCES))
+SOURCES = $(SRC_DIR)/otelnet.c $(SRC_DIR)/telnet.c $(SRC_DIR)/transfer.c $(SRC_DIR)/kermit_client.c
+EKERMIT_SOURCES = $(EKERMIT_DIR)/kermit.c
+ALL_SOURCES = $(SOURCES) $(EKERMIT_SOURCES)
+OBJECTS = $(patsubst $(SRC_DIR)/%.c,$(OBJ_DIR)/%.o,$(SOURCES)) $(OBJ_DIR)/kermit.o
+OBJECTS_STATIC = $(patsubst $(SRC_DIR)/%.c,$(OBJ_DIR)/%-static.o,$(SOURCES)) $(OBJ_DIR)/kermit-static.o
 
 # Header dependencies
-INCLUDES = -I$(INC_DIR)
+INCLUDES = -I$(INC_DIR) -I$(EKERMIT_DIR)
 
 # Debug build option
 DEBUG ?= 0
@@ -47,12 +58,22 @@ $(TARGET): $(OBJ_DIR) $(OBJECTS)
 # Compile source files
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.c | $(OBJ_DIR)
 	@echo "Compiling $<..."
-	$(CC) $(CFLAGS) $(INCLUDES) -c $< -o $@
+	$(CC) $(CFLAGS) $(KERMIT_FLAGS) $(INCLUDES) -c $< -o $@
+
+# Compile ekermit (disable -Werror for third-party code)
+$(OBJ_DIR)/kermit.o: $(EKERMIT_DIR)/kermit.c | $(OBJ_DIR)
+	@echo "Compiling $<..."
+	$(CC) $(filter-out -Werror,$(CFLAGS)) $(KERMIT_FLAGS) -Wno-unused-parameter -Wno-unused-variable -Wno-unused-but-set-variable -Wno-maybe-uninitialized -Wno-sign-compare $(INCLUDES) -c $< -o $@
 
 # Compile source files for static build
 $(OBJ_DIR)/%-static.o: $(SRC_DIR)/%.c | $(OBJ_DIR)
 	@echo "Compiling $< (static)..."
-	$(CC) $(CFLAGS) $(INCLUDES) -c $< -o $@
+	$(CC) $(CFLAGS) $(KERMIT_FLAGS) -Wno-macro-redefined $(INCLUDES) -c $< -o $@
+
+# Compile ekermit for static build (disable -Werror for third-party code)
+$(OBJ_DIR)/kermit-static.o: $(EKERMIT_DIR)/kermit.c | $(OBJ_DIR)
+	@echo "Compiling $< (static)..."
+	$(CC) $(filter-out -Werror,$(CFLAGS)) $(KERMIT_FLAGS) -Wno-unused-parameter -Wno-unused-variable -Wno-unused-but-set-variable -Wno-maybe-uninitialized -Wno-sign-compare $(INCLUDES) -c $< -o $@
 
 # Clean build artifacts
 .PHONY: clean
@@ -77,10 +98,12 @@ uninstall:
 	rm -f /etc/otelnet.conf.example
 	@echo "Uninstall complete"
 
-# Debug build
+# Debug build (clean first to ensure all files are compiled with DEBUG flag)
 .PHONY: debug
 debug:
-	$(MAKE) DEBUG=1
+	@echo "Building in DEBUG mode..."
+	@$(MAKE) clean
+	@$(MAKE) DEBUG=1
 
 # Static build
 .PHONY: static
@@ -116,5 +139,5 @@ help:
 	@echo "  show      - Show Makefile variables"
 	@echo "  help      - Show this help message"
 	@echo ""
-	@echo "Options:"
-	@echo "  DEBUG=1   - Enable debug build"
+	@echo "Usage:"
+	@echo "  make debug    - Build with debug symbols and logging"

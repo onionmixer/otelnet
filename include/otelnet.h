@@ -45,22 +45,6 @@
 #define ERROR_CONNECTION    -5
 #define ERROR_CONFIG        -6
 
-/* Logging macros */
-#ifdef DEBUG
-#define MB_LOG_DEBUG(fmt, ...) \
-    syslog(LOG_DEBUG, "[DEBUG] %s:%d: " fmt, __FILE__, __LINE__, ##__VA_ARGS__)
-#else
-#define MB_LOG_DEBUG(fmt, ...) do {} while(0)
-#endif
-
-#define MB_LOG_INFO(fmt, ...) \
-    syslog(LOG_INFO, "[INFO] " fmt, ##__VA_ARGS__)
-
-#define MB_LOG_WARNING(fmt, ...) \
-    syslog(LOG_WARNING, "[WARNING] " fmt, ##__VA_ARGS__)
-
-#define MB_LOG_ERROR(fmt, ...) \
-    syslog(LOG_ERR, "[ERROR] %s:%d: " fmt, __FILE__, __LINE__, ##__VA_ARGS__)
 
 /* Utility macros */
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
@@ -98,7 +82,7 @@ typedef struct {
 } otelnet_config_t;
 
 /* Main otelnet context */
-typedef struct {
+typedef struct otelnet_ctx {
     /* Telnet connection */
     telnet_t telnet;
 
@@ -138,6 +122,12 @@ typedef struct {
     zmodem_detector_t zmodem_detector;
     xmodem_detector_t xmodem_detector;
     ymodem_detector_t ymodem_detector;
+
+    /* Pending data buffer (for drain process)
+     * During BINARY mode negotiation, if non-telnet data arrives early,
+     * it's stored here to prevent loss */
+    unsigned char pending_data[BUFFER_SIZE];
+    size_t pending_data_len;
 } otelnet_ctx_t;
 
 /* Function prototypes */
@@ -244,5 +234,15 @@ void otelnet_print_stats(otelnet_ctx_t *ctx);
  * @param program_name Program name
  */
 void otelnet_print_usage(const char *program_name);
+
+/**
+ * Write data to log file (hex + ASCII format)
+ * @param ctx Context
+ * @param direction Direction label ("SEND", "RECEIVE", "KERMIT-SEND", "KERMIT-RECEIVE", etc.)
+ * @param data Data buffer
+ * @param len Data length
+ */
+void otelnet_log_data(otelnet_ctx_t *ctx, const char *direction,
+                      const unsigned char *data, size_t len);
 
 #endif /* OTELNET_H */

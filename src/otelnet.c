@@ -50,6 +50,11 @@ static char *otelnet_trim_whitespace(char *str)
     return str;
 }
 
+/**
+ * Get current timestamp string in format [YYYY-MM-DD HH:MM:SS]
+ * Returns pointer to internal static buffer
+ */
+
 /* UTF-8 helper functions (from bridge.c) - may be used for future enhancements */
 
 /**
@@ -165,7 +170,7 @@ int otelnet_load_config(otelnet_ctx_t *ctx, const char *config_file)
 
     fp = fopen(config_file, "r");
     if (fp == NULL) {
-        MB_LOG_WARNING("Could not open config file %s, using defaults", config_file);
+        fprintf(stderr, "[%s][WARNING] Could not open config file %s, using defaults\r\n", otelnet_get_timestamp(), config_file);
         return SUCCESS;  /* Not fatal, use defaults */
     }
 
@@ -254,16 +259,16 @@ int otelnet_load_config(otelnet_ctx_t *ctx, const char *config_file)
 
     fclose(fp);
 
-    MB_LOG_INFO("Configuration loaded from %s", config_file);
-    MB_LOG_INFO("  KERMIT: %s", ctx->config.transfer.kermit_path);
-    MB_LOG_INFO("  SEND_ZMODEM: %s", ctx->config.transfer.send_zmodem_path);
-    MB_LOG_INFO("  RECEIVE_ZMODEM: %s", ctx->config.transfer.receive_zmodem_path);
-    MB_LOG_INFO("  LOG: %s", ctx->config.log_enabled ? "enabled" : "disabled");
+    printf("[%s][INFO] Configuration loaded from %s\r\n", otelnet_get_timestamp(), config_file); fflush(stdout);
+    printf("[%s][INFO]   KERMIT: %s\r\n", otelnet_get_timestamp(), ctx->config.transfer.kermit_path); fflush(stdout);
+    printf("[%s][INFO]   SEND_ZMODEM: %s\r\n", otelnet_get_timestamp(), ctx->config.transfer.send_zmodem_path); fflush(stdout);
+    printf("[%s][INFO]   RECEIVE_ZMODEM: %s\r\n", otelnet_get_timestamp(), ctx->config.transfer.receive_zmodem_path); fflush(stdout);
+    printf("[%s][INFO]   LOG: %s\r\n", otelnet_get_timestamp(), ctx->config.log_enabled ? "enabled" : "disabled"); fflush(stdout);
     if (ctx->config.log_enabled) {
-        MB_LOG_INFO("  LOG_FILE: %s", ctx->config.log_file);
+        printf("[%s][INFO]   LOG_FILE: %s\r\n", otelnet_get_timestamp(), ctx->config.log_file); fflush(stdout);
     }
-    MB_LOG_INFO("  AUTO_ZMODEM: %s", ctx->config.transfer.auto_zmodem_enabled ? "enabled" : "disabled");
-    MB_LOG_INFO("  TRANSFER_TIMEOUT: %d seconds", ctx->config.transfer.transfer_timeout_seconds);
+    printf("[%s][INFO]   AUTO_ZMODEM: %s\r\n", otelnet_get_timestamp(), ctx->config.transfer.auto_zmodem_enabled ? "enabled" : "disabled"); fflush(stdout);
+    printf("[%s][INFO]   TRANSFER_TIMEOUT: %d seconds\r\n", otelnet_get_timestamp(), ctx->config.transfer.transfer_timeout_seconds); fflush(stdout);
 
     return SUCCESS;
 }
@@ -281,7 +286,7 @@ int otelnet_setup_terminal(otelnet_ctx_t *ctx)
 
     /* Save original terminal settings */
     if (tcgetattr(STDIN_FILENO, &ctx->orig_termios) < 0) {
-        MB_LOG_ERROR("Failed to get terminal attributes: %s", strerror(errno));
+        fprintf(stderr, "[%s][ERROR] %s:%d: Failed to get terminal attributes: %s\r\n", otelnet_get_timestamp(), __FILE__, __LINE__, strerror(errno));
         return ERROR_IO;
     }
     ctx->termios_saved = true;
@@ -309,7 +314,7 @@ int otelnet_setup_terminal(otelnet_ctx_t *ctx)
 
     /* Apply terminal settings */
     if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) < 0) {
-        MB_LOG_ERROR("Failed to set terminal attributes: %s", strerror(errno));
+        fprintf(stderr, "[%s][ERROR] %s:%d: Failed to set terminal attributes: %s\r\n", otelnet_get_timestamp(), __FILE__, __LINE__, strerror(errno));
         return ERROR_IO;
     }
 
@@ -319,7 +324,9 @@ int otelnet_setup_terminal(otelnet_ctx_t *ctx)
         fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK);
     }
 
-    MB_LOG_DEBUG("Terminal setup complete (raw mode)");
+    #ifdef DEBUG
+    printf("[DEBUG] %s:%d: Terminal setup complete (raw mode)\r\n", __FILE__, __LINE__); fflush(stdout);
+#endif
 
     return SUCCESS;
 }
@@ -341,7 +348,9 @@ void otelnet_restore_terminal(otelnet_ctx_t *ctx)
         fcntl(STDIN_FILENO, F_SETFL, flags & ~O_NONBLOCK);
     }
 
-    MB_LOG_DEBUG("Terminal restored");
+    #ifdef DEBUG
+    printf("[DEBUG] %s:%d: Terminal restored\r\n", __FILE__, __LINE__); fflush(stdout);
+#endif
 }
 
 /**
@@ -355,12 +364,12 @@ int otelnet_connect(otelnet_ctx_t *ctx, const char *host, int port)
         return ERROR_INVALID_ARG;
     }
 
-    MB_LOG_INFO("Connecting to %s:%d...", host, port);
+    printf("[%s][INFO] Connecting to %s:%d...\r\n", otelnet_get_timestamp(), host, port); fflush(stdout);
     printf("Connecting to %s:%d...\r\n", host, port);
 
     ret = telnet_connect(&ctx->telnet, host, port);
     if (ret != SUCCESS) {
-        MB_LOG_ERROR("Failed to connect to %s:%d", host, port);
+        fprintf(stderr, "[%s][ERROR] %s:%d: Failed to connect to %s:%d\r\n", otelnet_get_timestamp(), __FILE__, __LINE__, host, port);
         printf("Connection failed: %s\r\n", strerror(errno));
         return ret;
     }
@@ -374,7 +383,9 @@ int otelnet_connect(otelnet_ctx_t *ctx, const char *host, int port)
     if (ioctl(STDIN_FILENO, TIOCGWINSZ, &ws) == 0) {
         ctx->telnet.term_width = ws.ws_col;
         ctx->telnet.term_height = ws.ws_row;
-        MB_LOG_DEBUG("Initial window size: %dx%d", ctx->telnet.term_width, ctx->telnet.term_height);
+        #ifdef DEBUG
+    printf("[DEBUG] %s:%d: Initial window size: %dx%d\r\n", __FILE__, __LINE__, ctx->telnet.term_width, ctx->telnet.term_height); fflush(stdout);
+#endif
     }
 
     return SUCCESS;
@@ -390,7 +401,7 @@ void otelnet_disconnect(otelnet_ctx_t *ctx)
     }
 
     if (telnet_is_connected(&ctx->telnet)) {
-        MB_LOG_INFO("Disconnecting from telnet server");
+        printf("[%s][INFO] Disconnecting from telnet server\r\n", otelnet_get_timestamp()); fflush(stdout);
         telnet_disconnect(&ctx->telnet);
         printf("\r\nConnection closed\r\n");
     }
@@ -414,9 +425,8 @@ static int otelnet_update_window_size(otelnet_ctx_t *ctx)
 
         /* Check if size actually changed */
         if (new_width != ctx->telnet.term_width || new_height != ctx->telnet.term_height) {
-            MB_LOG_INFO("Window size changed: %dx%d -> %dx%d",
-                       ctx->telnet.term_width, ctx->telnet.term_height,
-                       new_width, new_height);
+            printf("[%s][INFO] Window size changed: %dx%d -> %dx%d\r\n", otelnet_get_timestamp(), ctx->telnet.term_width, ctx->telnet.term_height,
+                       new_width, new_height); fflush(stdout);
 
             /* Update stored size */
             ctx->telnet.term_width = new_width;
@@ -433,7 +443,7 @@ static int otelnet_update_window_size(otelnet_ctx_t *ctx)
 
         return SUCCESS;
     } else {
-        MB_LOG_WARNING("Failed to get window size: %s", strerror(errno));
+        fprintf(stderr, "[%s][WARNING] Failed to get window size: %s\r\n", otelnet_get_timestamp(), strerror(errno));
         g_winsize_changed = 0;
         return ERROR_IO;
     }
@@ -450,7 +460,7 @@ static int otelnet_open_log(otelnet_ctx_t *ctx)
 
     ctx->log_fp = fopen(ctx->config.log_file, "a");
     if (ctx->log_fp == NULL) {
-        MB_LOG_ERROR("Failed to open log file %s: %s", ctx->config.log_file, strerror(errno));
+        fprintf(stderr, "[%s][ERROR] %s:%d: Failed to open log file %s: %s\r\n", otelnet_get_timestamp(), __FILE__, __LINE__, ctx->config.log_file, strerror(errno));
         printf("Warning: Failed to open log file %s\r\n", ctx->config.log_file);
         ctx->config.log_enabled = false;
         return ERROR_IO;
@@ -464,7 +474,7 @@ static int otelnet_open_log(otelnet_ctx_t *ctx)
     fprintf(ctx->log_fp, "\n[%s] === Session started ===\n", timestamp);
     fflush(ctx->log_fp);
 
-    MB_LOG_INFO("Logging enabled to %s", ctx->config.log_file);
+    printf("[%s][INFO] Logging enabled to %s\r\n", otelnet_get_timestamp(), ctx->config.log_file); fflush(stdout);
     printf("Logging to: %s\r\n", ctx->config.log_file);
 
     return SUCCESS;
@@ -493,8 +503,8 @@ static void otelnet_close_log(otelnet_ctx_t *ctx)
 /**
  * Write data to log file
  */
-static void otelnet_log_data(otelnet_ctx_t *ctx, const char *direction,
-                            const unsigned char *data, size_t len)
+void otelnet_log_data(otelnet_ctx_t *ctx, const char *direction,
+                      const unsigned char *data, size_t len)
 {
     if (ctx == NULL || ctx->log_fp == NULL || !ctx->config.log_enabled) {
         return;
@@ -712,7 +722,7 @@ int otelnet_execute_external_program_with_args(otelnet_ctx_t *ctx, const char *p
 
     pid = fork();
     if (pid < 0) {
-        MB_LOG_ERROR("Failed to fork: %s", strerror(errno));
+        fprintf(stderr, "[%s][ERROR] %s:%d: Failed to fork: %s\r\n", otelnet_get_timestamp(), __FILE__, __LINE__, strerror(errno));
         printf("Error: Failed to fork process\r\n");
         otelnet_setup_terminal(ctx);
         return ERROR_GENERAL;
@@ -740,14 +750,14 @@ int otelnet_execute_external_program_with_args(otelnet_ctx_t *ctx, const char *p
         exit(EXIT_FAILURE);
     } else {
         /* Parent process */
-        MB_LOG_INFO("Waiting for child process %d (%s) to complete", pid, program_path);
+        printf("[%s][INFO] Waiting for child process %d (%s) to complete\r\n", otelnet_get_timestamp(), pid, program_path); fflush(stdout);
 
         /* Wait for child to complete */
         waitpid(pid, &status, 0);
 
         if (WIFEXITED(status)) {
             int exit_code = WEXITSTATUS(status);
-            MB_LOG_INFO("Program exited with code %d", exit_code);
+            printf("[%s][INFO] Program exited with code %d\r\n", otelnet_get_timestamp(), exit_code); fflush(stdout);
             printf("\r\n[Program exited with code %d]\r\n", exit_code);
             if (exit_code == 0) {
                 printf("[Transfer completed successfully]\r\n");
@@ -756,7 +766,7 @@ int otelnet_execute_external_program_with_args(otelnet_ctx_t *ctx, const char *p
             }
         } else if (WIFSIGNALED(status)) {
             int sig = WTERMSIG(status);
-            MB_LOG_WARNING("Program terminated by signal %d", sig);
+            fprintf(stderr, "[%s][WARNING] Program terminated by signal %d\r\n", otelnet_get_timestamp(), sig);
             printf("\r\n[Program terminated by signal %d]\r\n", sig);
         }
 
@@ -810,10 +820,8 @@ static int otelnet_execute_transfer(otelnet_ctx_t *ctx,
         ctx->transfer.filename[sizeof(ctx->transfer.filename) - 1] = '\0';
     }
 
-    /* Set application mode */
-    ctx->mode = OTELNET_MODE_TRANSFER;
-
     /* Save current telnet protocol state */
+    printf("[%s][INFO] Saving current telnet protocol state\r\n", otelnet_get_timestamp()); fflush(stdout);
     telnet_save_state(&ctx->telnet,
                      &ctx->transfer.saved_binary_local,
                      &ctx->transfer.saved_binary_remote,
@@ -826,8 +834,137 @@ static int otelnet_execute_transfer(otelnet_ctx_t *ctx,
     /* Print telnet mode before transfer (DEBUG only) */
     telnet_debug_print_mode(&ctx->telnet, "Before file transfer");
 
-    /* Request BINARY mode for 8-bit clean transmission */
-    telnet_request_binary_mode(&ctx->telnet);
+    /* Check if already in BINARY mode to avoid unnecessary negotiation */
+    bool already_binary = ctx->telnet.binary_local && ctx->telnet.binary_remote;
+    int drain_count;
+
+    if (!already_binary) {
+        /* Request BINARY mode for 8-bit clean transmission */
+        printf("[%s][INFO] Requesting BINARY mode (before: binary_local=%d, binary_remote=%d)\r\n", otelnet_get_timestamp(), ctx->telnet.binary_local, ctx->telnet.binary_remote); fflush(stdout);
+        telnet_request_binary_mode(&ctx->telnet);
+        printf("[%s][INFO] BINARY mode requested (after: binary_local=%d, binary_remote=%d)\r\n", otelnet_get_timestamp(), ctx->telnet.binary_local, ctx->telnet.binary_remote); fflush(stdout);
+
+        /* Wait briefly and drain any pending BINARY negotiation packets
+         * This ensures server's WILL/DO BINARY responses are consumed before
+         * Kermit transfer starts. We don't use the while loop check because
+         * telnet_request_binary_mode() sets flags immediately (optimistic).
+         * Instead, we just wait a short time for network round-trip. */
+        printf("\r\n[%s] [Waiting for BINARY mode negotiation...]\r\n", otelnet_get_timestamp());
+        printf("[%s][INFO] Waiting for BINARY mode negotiation responses...\r\n", otelnet_get_timestamp()); fflush(stdout);
+
+        drain_count = 3;  /* 300ms total (100ms * 3) - enough for network RTT */
+    } else {
+        /* Already in BINARY mode - just do a quick drain to clear any text */
+        printf("[%s][INFO] Already in BINARY mode (local=%d, remote=%d), skipping negotiation\r\n", otelnet_get_timestamp(), ctx->telnet.binary_local, ctx->telnet.binary_remote); fflush(stdout);
+        printf("\r\n[%s] [BINARY mode already active]\r\n", otelnet_get_timestamp());
+        printf("[%s][INFO] Performing quick drain to clear any pending text messages...\r\n", otelnet_get_timestamp()); fflush(stdout);
+
+        drain_count = 2;  /* 200ms - shorter drain since no negotiation needed */
+    }
+    while (drain_count > 0) {
+        fd_set readfds;
+        struct timeval tv;
+        FD_ZERO(&readfds);
+        FD_SET(ctx->telnet.fd, &readfds);
+        tv.tv_sec = 0;
+        tv.tv_usec = 100000;  /* 100ms timeout */
+
+        int ret = select(ctx->telnet.fd + 1, &readfds, NULL, NULL, &tv);
+        if (ret > 0 && FD_ISSET(ctx->telnet.fd, &readfds)) {
+            /* Drain BINARY negotiation responses only
+             * Mode is still CLIENT/CONSOLE, so data won't be lost */
+            unsigned char drain_buf[256];
+            ssize_t n = recv(ctx->telnet.fd, drain_buf, sizeof(drain_buf), MSG_DONTWAIT);
+            if (n > 0) {
+                #ifdef DEBUG
+    printf("[DEBUG] %s:%d: Drained %zd bytes during BINARY negotiation\r\n", __FILE__, __LINE__, n); fflush(stdout);
+#endif
+                /* Process only telnet protocol (IAC sequences)
+                 * Any non-telnet data is saved to pending buffer for Kermit */
+                unsigned char proc_buf[256];
+                size_t proc_len;
+                telnet_process_input(&ctx->telnet, drain_buf, n, proc_buf, sizeof(proc_buf), &proc_len);
+                if (proc_len > 0) {
+                    /* Check if this is a valid Kermit packet or just text */
+                    bool is_kermit_packet = false;
+
+                    /* Method 1: Check for SOH (0x01) at start */
+                    if (proc_buf[0] == 0x01) {  /* SOH */
+                        is_kermit_packet = true;
+                        #ifdef DEBUG
+    printf("[DEBUG] %s:%d: Detected SOH in early data - likely Kermit packet\r\n", __FILE__, __LINE__); fflush(stdout);
+#endif
+                    }
+                    /* Method 2: Check if looks like Kermit packet (LEN field in valid range) */
+                    else if (proc_len >= 4) {
+                        unsigned char len_field = proc_buf[0];
+                        /* Valid Kermit LEN field: (SP + 3) to (SP + 94) = 35 to 126 (printable ASCII) */
+                        if (len_field >= 35 && len_field <= 126) {
+                            /* Additional check: SEQ and TYPE should also be printable */
+                            unsigned char seq_field = proc_buf[1];
+                            unsigned char type_field = proc_buf[2];
+                            if (seq_field >= 32 && seq_field <= 126 &&
+                                type_field >= 32 && type_field <= 126) {
+                                is_kermit_packet = true;
+                                #ifdef DEBUG
+    printf("[DEBUG] %s:%d: Detected valid Kermit packet format (LEN=%d, SEQ=%d, TYPE=%c)\r\n", __FILE__, __LINE__, len_field - 32, seq_field - 32, type_field); fflush(stdout);
+#endif
+                            }
+                        }
+                    }
+
+                    if (is_kermit_packet) {
+                        /* Valid Kermit packet - save it to prevent data loss */
+                        fprintf(stderr, "[%s][WARNING] Early Kermit packet arrival during BINARY negotiation: %zu bytes\r\n", otelnet_get_timestamp(), proc_len);
+
+                        /* Check if we have space in pending buffer */
+                        if (ctx->pending_data_len + proc_len <= sizeof(ctx->pending_data)) {
+                            memcpy(ctx->pending_data + ctx->pending_data_len, proc_buf, proc_len);
+                            ctx->pending_data_len += proc_len;
+                            printf("[%s][INFO] Saved Kermit packet to pending buffer (total: %zu bytes)\r\n", otelnet_get_timestamp(), ctx->pending_data_len); fflush(stdout);
+                        } else {
+                            fprintf(stderr, "[%s][ERROR] %s:%d: Pending buffer overflow! Lost %zu bytes of data\r\n", otelnet_get_timestamp(), __FILE__, __LINE__, proc_len);
+                        }
+
+                        /* Early packet detected - no need to continue draining
+                         * The transfer will start soon anyway */
+                        break;
+                    } else {
+                        /* Text message (like countdown) - discard it to prevent NAK */
+                        printf("[%s][INFO] Discarding non-Kermit text during drain: %zu bytes\r\n", otelnet_get_timestamp(), proc_len); fflush(stdout);
+
+                        /* Log first 60 chars for debugging */
+                        if (proc_len > 0) {
+                            char text_preview[61];
+                            size_t preview_len = proc_len < 60 ? proc_len : 60;
+                            memcpy(text_preview, proc_buf, preview_len);
+                            text_preview[preview_len] = '\0';
+                            /* Replace non-printable chars with '.' for readability */
+                            for (size_t i = 0; i < preview_len; i++) {
+                                if (text_preview[i] < 32 || text_preview[i] > 126) {
+                                    text_preview[i] = '.';
+                                }
+                            }
+                            #ifdef DEBUG
+    printf("[DEBUG] %s:%d: Discarded text: [%s]\r\n", __FILE__, __LINE__, text_preview); fflush(stdout);
+#endif
+                        }
+
+                        /* Do NOT save to pending buffer - continue draining */
+                    }
+                }
+            }
+        }
+        drain_count--;
+    }
+
+    printf("\r\n[%s] [BINARY mode negotiation complete]\r\n", otelnet_get_timestamp());
+    printf("[%s][INFO] BINARY mode negotiation complete\r\n", otelnet_get_timestamp()); fflush(stdout);
+
+    /* NOW set application mode - after negotiation drain
+     * This prevents otelnet_process_telnet() from discarding Kermit data */
+    ctx->mode = OTELNET_MODE_TRANSFER;
+    printf("[%s][INFO] Application mode set to TRANSFER\r\n", otelnet_get_timestamp()); fflush(stdout);
 
     /* Start transfer logging */
     transfer_log_start(&ctx->config.transfer, &ctx->transfer);
@@ -839,14 +976,16 @@ static int otelnet_execute_transfer(otelnet_ctx_t *ctx,
                                                  &ctx->transfer,
                                                  telnet_fd,
                                                  filename,
-                                                 &ctx->telnet);
+                                                 &ctx->telnet,
+                                                 (struct otelnet_ctx *)ctx);
             break;
 
         case TRANSFER_KERMIT_RECV:
             result = transfer_execute_kermit_receive(&ctx->config.transfer,
                                                     &ctx->transfer,
                                                     telnet_fd,
-                                                    &ctx->telnet);
+                                                    &ctx->telnet,
+                                                    (struct otelnet_ctx *)ctx);
             break;
 
         case TRANSFER_ZMODEM_SEND:
@@ -926,8 +1065,9 @@ static int otelnet_execute_transfer(otelnet_ctx_t *ctx,
             ssize_t n = recv(telnet_fd, flush_buf, sizeof(flush_buf), MSG_DONTWAIT);
             if (n > 0) {
                 flushed_total += n;
-                MB_LOG_DEBUG("Flushed %zd bytes from socket after transfer (attempt %d)",
-                           n, flush_attempts + 1);
+                #ifdef DEBUG
+    printf("[DEBUG] %s:%d: Flushed %zd bytes from socket after transfer (attempt %d)\r\n", __FILE__, __LINE__, n, flush_attempts + 1); fflush(stdout);
+#endif
             } else if (n == 0) {
                 /* Connection closed */
                 break;
@@ -948,7 +1088,7 @@ static int otelnet_execute_transfer(otelnet_ctx_t *ctx,
         }
 
         if (flushed_total > 0) {
-            MB_LOG_INFO("Flushed %zd bytes from socket buffer after transfer", flushed_total);
+            printf("[%s][INFO] Flushed %zd bytes from socket buffer after transfer\r\n", otelnet_get_timestamp(), flushed_total); fflush(stdout);
         }
     }
 
@@ -994,9 +1134,6 @@ static int otelnet_execute_transfer_multi(otelnet_ctx_t *ctx,
         return ERROR_GENERAL;
     }
 
-    /* Set application mode */
-    ctx->mode = OTELNET_MODE_TRANSFER;
-
     /* Save current telnet protocol state */
     telnet_save_state(&ctx->telnet,
                      &ctx->transfer.saved_binary_local,
@@ -1012,6 +1149,45 @@ static int otelnet_execute_transfer_multi(otelnet_ctx_t *ctx,
 
     /* Request BINARY mode for 8-bit clean transmission */
     telnet_request_binary_mode(&ctx->telnet);
+
+    /* Wait briefly and drain any pending BINARY negotiation packets */
+    printf("\r\n[%s] [Waiting for BINARY mode negotiation...]\r\n", otelnet_get_timestamp());
+    printf("[%s][INFO] Waiting for BINARY mode negotiation responses...\r\n", otelnet_get_timestamp()); fflush(stdout);
+
+    int drain_count = 3;  /* 300ms total (100ms * 3) - enough for network RTT */
+    while (drain_count > 0) {
+        fd_set readfds;
+        struct timeval tv;
+        FD_ZERO(&readfds);
+        FD_SET(ctx->telnet.fd, &readfds);
+        tv.tv_sec = 0;
+        tv.tv_usec = 100000;  /* 100ms timeout */
+
+        int ret = select(ctx->telnet.fd + 1, &readfds, NULL, NULL, &tv);
+        if (ret > 0 && FD_ISSET(ctx->telnet.fd, &readfds)) {
+            /* Drain BINARY negotiation responses only */
+            unsigned char drain_buf[256];
+            ssize_t n = recv(ctx->telnet.fd, drain_buf, sizeof(drain_buf), MSG_DONTWAIT);
+            if (n > 0) {
+                #ifdef DEBUG
+    printf("[DEBUG] %s:%d: Drained %zd bytes during BINARY negotiation\r\n", __FILE__, __LINE__, n); fflush(stdout);
+#endif
+                unsigned char proc_buf[256];
+                size_t proc_len;
+                telnet_process_input(&ctx->telnet, drain_buf, n, proc_buf, sizeof(proc_buf), &proc_len);
+                if (proc_len > 0) {
+                    fprintf(stderr, "[%s][WARNING] Unexpected %zu bytes of data during BINARY negotiation\r\n", otelnet_get_timestamp(), proc_len);
+                }
+            }
+        }
+        drain_count--;
+    }
+
+    printf("\r\n[%s] [BINARY mode negotiation complete]\r\n", otelnet_get_timestamp());
+    printf("[%s][INFO] BINARY mode negotiation complete\r\n", otelnet_get_timestamp()); fflush(stdout);
+
+    /* NOW set application mode - after negotiation drain */
+    ctx->mode = OTELNET_MODE_TRANSFER;
 
     /* Start transfer logging */
     transfer_log_start(&ctx->config.transfer, &ctx->transfer);
@@ -1082,8 +1258,9 @@ static int otelnet_execute_transfer_multi(otelnet_ctx_t *ctx,
             ssize_t n = recv(telnet_fd, flush_buf, sizeof(flush_buf), MSG_DONTWAIT);
             if (n > 0) {
                 flushed_total += n;
-                MB_LOG_DEBUG("Flushed %zd bytes from socket after transfer (attempt %d)",
-                           n, flush_attempts + 1);
+                #ifdef DEBUG
+    printf("[DEBUG] %s:%d: Flushed %zd bytes from socket after transfer (attempt %d)\r\n", __FILE__, __LINE__, n, flush_attempts + 1); fflush(stdout);
+#endif
             } else if (n == 0) {
                 /* Connection closed */
                 break;
@@ -1104,7 +1281,7 @@ static int otelnet_execute_transfer_multi(otelnet_ctx_t *ctx,
         }
 
         if (flushed_total > 0) {
-            MB_LOG_INFO("Flushed %zd bytes from socket buffer after transfer", flushed_total);
+            printf("[%s][INFO] Flushed %zd bytes from socket buffer after transfer\r\n", otelnet_get_timestamp(), flushed_total); fflush(stdout);
         }
     }
 
@@ -1475,8 +1652,13 @@ int otelnet_process_console_command(otelnet_ctx_t *ctx, const char *command)
         printf("  rz                       - Receive via ZMODEM\r\n");
         printf("  ry                       - Receive via YMODEM\r\n");
         printf("  rx                       - Receive via XMODEM\r\n");
-        printf("  rkermit                  - Receive via Kermit\r\n");
-        printf("  ls /tmp                  - List /tmp directory\r\n");
+        printf("  ls /tmp                  - List /tmp directory\r\n\r\n");
+        printf("=== Kermit Download Workflow (Manual) ===\r\n");
+        printf("When server sends: \"Starting Kermit send of 'filename'...\"\r\n");
+        printf("1. Press Ctrl+] to enter console mode\r\n");
+        printf("2. Type: skermit filename\r\n");
+        printf("3. Wait for transfer to complete\r\n");
+        printf("Note: Kermit does NOT auto-start. You must manually run skermit.\r\n");
         printf("========================\r\n");
         return SUCCESS;
     }
@@ -1573,40 +1755,48 @@ int otelnet_process_console_command(otelnet_ctx_t *ctx, const char *command)
             return ERROR_INVALID_ARG;
         }
 
-        /* Check if file exists */
-        if (access(args[0], F_OK) != 0) {
-            printf("\r\nError: File not found: %s\r\n", args[0]);
-            return ERROR_IO;
-        }
-
-        if (access(args[0], R_OK) != 0) {
-            printf("\r\nError: Cannot read file: %s\r\n", args[0]);
+        /* Convert relative path to absolute path */
+        char *abs_path = realpath(args[0], NULL);
+        if (abs_path == NULL) {
+            /* realpath failed - file doesn't exist or no permission */
+            printf("\r\nError: Cannot access file '%s': %s\r\n", args[0], strerror(errno));
             return ERROR_IO;
         }
 
         printf("\r\n[Kermit Send Mode]\r\n");
-        printf("[Sending: %s]\r\n", args[0]);
+        printf("[Sending: %s]\r\n", abs_path);
 
         /* Execute transfer using transfer module */
-        return otelnet_execute_transfer(ctx, TRANSFER_KERMIT_SEND, args[0]);
+        int result = otelnet_execute_transfer(ctx, TRANSFER_KERMIT_SEND, abs_path);
+
+        /* Free allocated path */
+        free(abs_path);
+
+        return result;
     }
 
     /* rkermit - receive via Kermit protocol */
     if (strcmp(program, "rkermit") == 0) {
+        printf("[%s][INFO] >>> rkermit command processing started\r\n", otelnet_get_timestamp()); fflush(stdout);
+
         if (arg_count > 0) {
             printf("\r\nNote: rkermit does not accept arguments\r\n");
             printf("Files will be saved to current directory\r\n");
         }
 
-        printf("\r\n[Kermit Receive Mode]\r\n");
-        printf("[Ready to receive file(s)]\r\n");
+        printf("\r\n[%s] [Kermit Receive Mode]\r\n", otelnet_get_timestamp());
+        printf("[%s] [Ready to receive file(s)]\r\n", otelnet_get_timestamp());
         char cwd[BUFFER_SIZE];
         if (getcwd(cwd, sizeof(cwd)) != NULL) {
             printf("[Save to: %s]\r\n", cwd);
+            printf("[%s][INFO] Save directory: %s\r\n", otelnet_get_timestamp(), cwd); fflush(stdout);
         }
 
+        printf("[%s][INFO] Calling otelnet_execute_transfer(TRANSFER_KERMIT_RECV)\r\n", otelnet_get_timestamp()); fflush(stdout);
         /* Execute transfer using transfer module */
-        return otelnet_execute_transfer(ctx, TRANSFER_KERMIT_RECV, NULL);
+        int result = otelnet_execute_transfer(ctx, TRANSFER_KERMIT_RECV, NULL);
+        printf("[%s][INFO] <<< rkermit command completed with result: %d\r\n", otelnet_get_timestamp(), result); fflush(stdout);
+        return result;
     }
 
     /* sz/sx/sy - send with protocol options */
@@ -1689,7 +1879,9 @@ int otelnet_process_console_command(otelnet_ctx_t *ctx, const char *command)
             }
 
             abs_paths[abs_count++] = abs_path;
-            MB_LOG_DEBUG("Converted '%s' to absolute path '%s'", rel_path, abs_path);
+            #ifdef DEBUG
+    printf("[DEBUG] %s:%d: Converted '%s' to absolute path '%s'\r\n", __FILE__, __LINE__, rel_path, abs_path); fflush(stdout);
+#endif
         }
 
         /* Send notification to server for XMODEM/YMODEM uploads to trigger auto-receive */
@@ -1705,14 +1897,14 @@ int otelnet_process_console_command(otelnet_ctx_t *ctx, const char *command)
                     "\r\nStarting %s send of '%s'...\r\n", protocol_name, first_file);
 
             telnet_send(&ctx->telnet, notify_msg, strlen(notify_msg));
-            MB_LOG_INFO("Sent %s upload notification to server", protocol_name);
+            printf("[%s][INFO] Sent %s upload notification to server\r\n", otelnet_get_timestamp(), protocol_name); fflush(stdout);
 
             /* Request BINARY mode for transfer */
             printf("\r\n*** Notifying server to start %s receive... ***\r\n", protocol_name);
             printf("*** Negotiating BINARY mode... ***\r\n");
 
             telnet_request_binary_mode(&ctx->telnet);
-            MB_LOG_INFO("Requested BINARY mode for %s transfer", protocol_name);
+            printf("[%s][INFO] Requested BINARY mode for %s transfer\r\n", otelnet_get_timestamp(), protocol_name); fflush(stdout);
 
             /* Wait for BINARY mode negotiation to complete */
             int timeout_count = 50;  /* 5 seconds total (100ms * 50) */
@@ -1722,7 +1914,7 @@ int otelnet_process_console_command(otelnet_ctx_t *ctx, const char *command)
                 /* Check if both directions are in BINARY mode */
                 if (ctx->telnet.binary_local && ctx->telnet.binary_remote) {
                     binary_ready = true;
-                    MB_LOG_INFO("BINARY mode negotiation complete (bidirectional)");
+                    printf("[%s][INFO] BINARY mode negotiation complete (bidirectional)\r\n", otelnet_get_timestamp()); fflush(stdout);
                     break;
                 }
 
@@ -1744,7 +1936,7 @@ int otelnet_process_console_command(otelnet_ctx_t *ctx, const char *command)
             }
 
             if (!binary_ready) {
-                MB_LOG_WARNING("BINARY mode negotiation timeout - continuing anyway");
+                fprintf(stderr, "[%s][WARNING] BINARY mode negotiation timeout - continuing anyway\r\n", otelnet_get_timestamp());
                 printf("*** Warning: BINARY mode negotiation incomplete ***\r\n");
             } else {
                 printf("*** BINARY mode ready ***\r\n");
@@ -1864,7 +2056,7 @@ int otelnet_process_stdin(otelnet_ctx_t *ctx)
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
             return SUCCESS;
         }
-        MB_LOG_ERROR("Failed to read from stdin: %s", strerror(errno));
+        fprintf(stderr, "[%s][ERROR] %s:%d: Failed to read from stdin: %s\r\n", otelnet_get_timestamp(), __FILE__, __LINE__, strerror(errno));
         return ERROR_IO;
     }
 
@@ -1957,7 +2149,7 @@ int otelnet_process_stdin(otelnet_ctx_t *ctx)
                 if (sent > 0) {
                     ctx->bytes_sent += sent;
                     /* Log sent data */
-                    otelnet_log_data(ctx, "send", buf, n);
+                    otelnet_log_data(ctx, "SEND", buf, n);
                 }
             }
         }
@@ -2032,14 +2224,14 @@ int otelnet_process_telnet(otelnet_ctx_t *ctx)
 
     n = telnet_recv(&ctx->telnet, recv_buf, sizeof(recv_buf));
     if (n < 0) {
-        MB_LOG_ERROR("Telnet connection error");
+        fprintf(stderr, "[%s][ERROR] %s:%d: Telnet connection error\r\n", otelnet_get_timestamp(), __FILE__, __LINE__);
         return ERROR_CONNECTION;
     }
 
     if (n == 0) {
         /* Connection closed or no data */
         if (!telnet_is_connected(&ctx->telnet)) {
-            MB_LOG_INFO("Telnet connection closed by server");
+            printf("[%s][INFO] Telnet connection closed by server\r\n", otelnet_get_timestamp()); fflush(stdout);
             ctx->running = false;
             return ERROR_CONNECTION;
         }
@@ -2053,7 +2245,7 @@ int otelnet_process_telnet(otelnet_ctx_t *ctx)
         ctx->bytes_received += output_len;
 
         /* Log received data */
-        otelnet_log_data(ctx, "receive", output_buf, output_len);
+        otelnet_log_data(ctx, "RECEIVE", output_buf, output_len);
 
         /* During file transfer, do not output to stdout - transfer process handles it */
         if (ctx->mode == OTELNET_MODE_TRANSFER) {
@@ -2072,12 +2264,12 @@ int otelnet_process_telnet(otelnet_ctx_t *ctx)
                                      &is_receive_init, &is_send_init)) {
                 if (is_receive_init) {
                     /* Remote is sending, we should receive */
-                    MB_LOG_INFO("ZMODEM receive trigger detected");
+                    printf("[%s][INFO] ZMODEM receive trigger detected\r\n", otelnet_get_timestamp()); fflush(stdout);
                     otelnet_auto_start_zmodem_receive(ctx);
                     return SUCCESS;  /* Return to allow transfer to proceed */
                 } else if (is_send_init) {
                     /* Remote wants to receive, we should send */
-                    MB_LOG_INFO("ZMODEM send trigger detected");
+                    printf("[%s][INFO] ZMODEM send trigger detected\r\n", otelnet_get_timestamp()); fflush(stdout);
                     otelnet_auto_start_zmodem_send(ctx);
                     return SUCCESS;  /* Return to allow transfer to proceed */
                 }
@@ -2096,12 +2288,12 @@ int otelnet_process_telnet(otelnet_ctx_t *ctx)
                                      &is_receive_init, &is_send_init)) {
                 if (is_receive_init) {
                     /* Remote is sending, we should receive */
-                    MB_LOG_INFO("XMODEM receive trigger detected");
+                    printf("[%s][INFO] XMODEM receive trigger detected\r\n", otelnet_get_timestamp()); fflush(stdout);
                     otelnet_auto_start_xmodem_receive(ctx);
                     return SUCCESS;  /* Return to allow transfer to proceed */
                 } else if (is_send_init) {
                     /* Remote wants to receive, we should send */
-                    MB_LOG_INFO("XMODEM send trigger detected");
+                    printf("[%s][INFO] XMODEM send trigger detected\r\n", otelnet_get_timestamp()); fflush(stdout);
                     otelnet_auto_start_xmodem_send(ctx);
                     return SUCCESS;  /* Return to allow transfer to proceed */
                 }
@@ -2120,12 +2312,12 @@ int otelnet_process_telnet(otelnet_ctx_t *ctx)
                                      &is_receive_init, &is_send_init)) {
                 if (is_receive_init) {
                     /* Remote is sending, we should receive */
-                    MB_LOG_INFO("YMODEM receive trigger detected");
+                    printf("[%s][INFO] YMODEM receive trigger detected\r\n", otelnet_get_timestamp()); fflush(stdout);
                     otelnet_auto_start_ymodem_receive(ctx);
                     return SUCCESS;  /* Return to allow transfer to proceed */
                 } else if (is_send_init) {
                     /* Remote wants to receive, we should send */
-                    MB_LOG_INFO("YMODEM send trigger detected");
+                    printf("[%s][INFO] YMODEM send trigger detected\r\n", otelnet_get_timestamp()); fflush(stdout);
                     otelnet_auto_start_ymodem_send(ctx);
                     return SUCCESS;  /* Return to allow transfer to proceed */
                 }
@@ -2182,14 +2374,14 @@ int otelnet_process_telnet(otelnet_ctx_t *ctx)
 
             ssize_t written = write(STDOUT_FILENO, translated_buf, translated_len);
             if (written < 0) {
-                MB_LOG_ERROR("Failed to write to stdout: %s", strerror(errno));
+                fprintf(stderr, "[%s][ERROR] %s:%d: Failed to write to stdout: %s\r\n", otelnet_get_timestamp(), __FILE__, __LINE__, strerror(errno));
                 return ERROR_IO;
             }
         } else {
             /* Character mode: output as-is (server handles CRLF) */
             ssize_t written = write(STDOUT_FILENO, output_buf, output_len);
             if (written < 0) {
-                MB_LOG_ERROR("Failed to write to stdout: %s", strerror(errno));
+                fprintf(stderr, "[%s][ERROR] %s:%d: Failed to write to stdout: %s\r\n", otelnet_get_timestamp(), __FILE__, __LINE__, strerror(errno));
                 return ERROR_IO;
             }
         }
@@ -2255,7 +2447,7 @@ int otelnet_run(otelnet_ctx_t *ctx)
             if (errno == EINTR) {
                 continue;
             }
-            MB_LOG_ERROR("select() error: %s", strerror(errno));
+            fprintf(stderr, "[%s][ERROR] %s:%d: select() error: %s\r\n", otelnet_get_timestamp(), __FILE__, __LINE__, strerror(errno));
             return ERROR_IO;
         }
 
@@ -2267,7 +2459,7 @@ int otelnet_run(otelnet_ctx_t *ctx)
         /* Check stdin */
         if (FD_ISSET(STDIN_FILENO, &readfds)) {
             if (otelnet_process_stdin(ctx) != SUCCESS) {
-                MB_LOG_ERROR("Error processing stdin");
+                fprintf(stderr, "[%s][ERROR] %s:%d: Error processing stdin\r\n", otelnet_get_timestamp(), __FILE__, __LINE__);
             }
         }
 
@@ -2276,7 +2468,7 @@ int otelnet_run(otelnet_ctx_t *ctx)
             int telnet_fd = telnet_get_fd(&ctx->telnet);
             if (telnet_fd >= 0 && FD_ISSET(telnet_fd, &readfds)) {
                 if (otelnet_process_telnet(ctx) != SUCCESS) {
-                    MB_LOG_ERROR("Error processing telnet data");
+                    fprintf(stderr, "[%s][ERROR] %s:%d: Error processing telnet data\r\n", otelnet_get_timestamp(), __FILE__, __LINE__);
                     ctx->running = false;
                 }
             }

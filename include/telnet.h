@@ -17,6 +17,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <syslog.h>
+#include <time.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -32,22 +33,15 @@
 #define ERROR_TIMEOUT       -4
 #define ERROR_CONNECTION    -5
 
-/* Logging macros */
-#ifdef DEBUG
-#define MB_LOG_DEBUG(fmt, ...) \
-    syslog(LOG_DEBUG, "[DEBUG] %s:%d: " fmt, __FILE__, __LINE__, ##__VA_ARGS__)
-#else
-#define MB_LOG_DEBUG(fmt, ...) do {} while(0)
-#endif
+/* Timestamp helper function */
+static inline const char *otelnet_get_timestamp(void) {
+    static char timestamp[32];
+    time_t now = time(NULL);
+    struct tm *tm_info = localtime(&now);
+    strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", tm_info);
+    return timestamp;
+}
 
-#define MB_LOG_INFO(fmt, ...) \
-    syslog(LOG_INFO, "[INFO] " fmt, ##__VA_ARGS__)
-
-#define MB_LOG_WARNING(fmt, ...) \
-    syslog(LOG_WARNING, "[WARNING] " fmt, ##__VA_ARGS__)
-
-#define MB_LOG_ERROR(fmt, ...) \
-    syslog(LOG_ERR, "[ERROR] %s:%d: " fmt, __FILE__, __LINE__, ##__VA_ARGS__)
 
 /* Utility macros */
 #define SAFE_STRNCPY(dst, src, size) do { \

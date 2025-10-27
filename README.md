@@ -50,20 +50,20 @@ sudo make install
 
 ```bash
 # Connect to telnet server
-./build/otelnet <host> <port>
+./otelnet <host> <port>
 
 # Example
-./build/otelnet localhost 23
-./build/otelnet 192.168.1.100 8881
+./otelnet localhost 23
+./otelnet 192.168.1.100 8881
 
 # With custom config file
-./build/otelnet <host> <port> -c myconfig.conf
+./otelnet <host> <port> -c myconfig.conf
 
 # Show help
-./build/otelnet --help
+./otelnet --help
 
 # Show version
-./build/otelnet --version
+./otelnet --version
 ```
 
 ## Configuration
@@ -127,10 +127,10 @@ Press `Ctrl+]` during a telnet session to enter console mode.
 ### Basic Connection
 ```bash
 # Connect to BBS
-./build/otelnet bbs.example.com 23
+./otelnet bbs.example.com 23
 
 # Connect to local telnet server
-./build/otelnet localhost 8881
+./otelnet localhost 8881
 ```
 
 ### File Transfer Examples

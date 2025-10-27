@@ -271,7 +271,8 @@ case TELNET_AYT:  // 수신 시 응답 전송
     telnet_send(tn, response, strlen(response));
     break;
 case TELNET_IP/AO/BREAK/EC/EL:  // 로깅만
-    MB_LOG_INFO("Received IAC <command>");
+    printf("Received IAC <command>\r\n");
+    fflush(stdout);
     break;
 ```
 
