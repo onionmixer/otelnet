@@ -891,6 +891,19 @@ int otelnet_kermit_readf(struct k_data *k) {
         return -1;
     }
 
+    /* CRITICAL: Reset zinptr to start of buffer before reading
+     * ekermit's getpkt() advances zinptr and decrements zincnt as it consumes data.
+     * When zincnt reaches 0, readf is called again to refill the buffer.
+     * We MUST reset zinptr to zinbuf before fread(), otherwise zinptr will be
+     * pointing past the end of the buffer after ~10 reads, causing segfault.
+     *
+     * Example without reset:
+     *   1st read: zinptr = zinbuf + 0    → OK
+     *   2nd read: zinptr = zinbuf + 8192 → OK (but wrong!)
+     *   11th read: zinptr = zinbuf + 81920 → SEGFAULT (out of bounds!)
+     */
+    k->zinptr = k->zinbuf;
+
     /* Read into Kermit's input buffer */
     size_t nread = fread(k->zinptr, 1, k->zinlen, ctx->file);
 
@@ -903,6 +916,23 @@ int otelnet_kermit_readf(struct k_data *k) {
     }
 
     k->zincnt = nread;
+
+    /* CRITICAL: Check for EOF and return -1 (not 0!)
+     * ekermit's readfile() (unixio.c:523-524) returns -1 for EOF.
+     * Returning 0 causes infinite loop because ekermit keeps calling readf
+     * when zincnt==0, expecting it to refill the buffer.
+     *
+     * Per ekermit/unixio.c:523-524:
+     *   if (k->zincnt == 0)    // Check for EOF
+     *     return(-1);          // Return -1 for EOF
+     */
+    if (nread == 0) {
+        #ifdef DEBUG
+    printf("[DEBUG] %s:%d: End of file reached (total: %lu bytes) - returning -1 for EOF\r\n", __FILE__, __LINE__, (unsigned long)ctx->bytes_done); fflush(stdout);
+#endif
+        return -1;  /* EOF: return -1, NOT 0! */
+    }
+
     ctx->bytes_done += nread;
 
     /* Update transfer state for progress tracking */
@@ -911,18 +941,26 @@ int otelnet_kermit_readf(struct k_data *k) {
         ctx->transfer_state->last_data_time = time(NULL);
     }
 
-    if (nread == 0) {
-        #ifdef DEBUG
-    printf("[DEBUG] %s:%d: End of file reached (total: %lu bytes)\r\n", __FILE__, __LINE__, (unsigned long)ctx->bytes_done); fflush(stdout);
-#endif
-    } else {
-        #ifdef DEBUG
+    #ifdef DEBUG
     printf("[DEBUG] %s:%d: Read %zu bytes from file (total: %lu / %lu)\r\n", __FILE__, __LINE__, nread, (unsigned long)ctx->bytes_done,
                      (unsigned long)ctx->bytes_total); fflush(stdout);
 #endif
-    }
 
-    return nread;
+    /* CRITICAL: readf() must return first byte and advance zinptr!
+     * Per ekermit/kermit.c:56, the gnc() macro expects readf to:
+     * 1. Fill buffer (k->zinbuf, k->zincnt)
+     * 2. Reset k->zinptr to k->zinbuf
+     * 3. Return FIRST BYTE (not byte count!)
+     * 4. Advance zinptr and decrement zincnt
+     *
+     * Per ekermit/unixio.c:525-531:
+     *   k->zinptr = k->zinbuf;     // Reset pointer
+     *   (k->zincnt)--;             // Decrement count
+     *   return(*(k->zinptr)++ & 0xff); // Return first byte
+     */
+    k->zinptr = k->zinbuf;  /* Reset pointer to start */
+    (k->zincnt)--;          /* Decrement count */
+    return (*(k->zinptr)++ & 0xff);  /* Return first byte */
 }
 
 int otelnet_kermit_writef(struct k_data *k, UCHAR *buf, int len) {
