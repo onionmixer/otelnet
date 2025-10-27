@@ -47,6 +47,7 @@ static const char *kermit_get_timestamp(void)
 #define kermit_tochar(ch)   ((unsigned char)(((ch) + SP) & 0xFF))
 #define kermit_xunchar(ch)  ((unsigned char)(((ch) - SP) & 0xFF))
 
+#ifdef DEBUG
 /**
  * Calculate Kermit Type 1 checksum (6-bit checksum)
  * Same algorithm as ekermit's chk1() function
@@ -232,6 +233,7 @@ static void kermit_analyze_packet(const unsigned char *pkt, int len)
     printf("[%s][KERMIT-DEBUG] ----------------------------------------\r\n", kermit_get_timestamp());
     fflush(stdout);
 }
+#endif  /* DEBUG */
 
 /**
  * Re-enable auto-detection after Kermit transfer completes
@@ -1418,6 +1420,7 @@ int kermit_client_send(int socket_fd, telnet_t *telnet_ctx,
 #endif
 
             /* ENHANCED DEBUGGING: Analyze the packet that caused NAK */
+#ifdef DEBUG
             printf( "\r\n");
             printf( "[KERMIT-DEBUG] ========================================\r\n");
             printf( "[KERMIT-DEBUG] NAK #%d - DETAILED PACKET ANALYSIS (SEND MODE)\r\n", ctx.consecutive_naks);
@@ -1430,6 +1433,7 @@ int kermit_client_send(int socket_fd, telnet_t *telnet_ctx,
             printf( "[KERMIT-DEBUG] ========================================\r\n");
             printf( "\r\n");
             fflush(stdout);
+#endif
 
             if (ctx.consecutive_naks >= ctx.max_consecutive_naks) {
                 fprintf(stderr, "[%s][ERROR] %s:%d: Max consecutive NAKs (%d) exceeded - aborting\r\n", kermit_get_timestamp(), __FILE__, __LINE__, ctx.max_consecutive_naks);
