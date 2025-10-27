@@ -104,7 +104,9 @@ Press `Ctrl+]` during a telnet session to enter console mode.
 - `rz [options]` - Receive files via ZMODEM (default)
 - `ry` - Receive files via YMODEM
 - `rx` - Receive single file via XMODEM
-- `kermit [args]` - Run kermit file transfer
+- `skermit <file>` - Send file via embedded Kermit protocol
+- `rkermit` - Receive file via embedded Kermit protocol
+- `kermit [args]` - Run external kermit program (legacy)
 
 **Protocol Options:**
 - `--xmodem`, `-x` - Use XMODEM protocol
@@ -157,6 +159,12 @@ ry
 
 # Receive via XMODEM
 rx
+
+# Send file via embedded Kermit (recommended for telnet)
+skermit document.pdf
+
+# Receive file via embedded Kermit
+rkermit
 ```
 
 ### File Management
@@ -198,7 +206,21 @@ When `LOG=1` in configuration file, all send/receive data is logged:
   - `sz`/`rz` for XMODEM/YMODEM/ZMODEM transfers
   - `kermit` for Kermit protocol
 
-Install external programs:
+### Installing lrzsz (REQUIRED for file transfers)
+
+**IMPORTANT:** For best compatibility and reliability, use the patched version from:
+```bash
+# Clone and build lrzsz-lite (recommended)
+git clone https://github.com/onionmixer/lrzsz-lite.git
+cd lrzsz-lite
+./configure
+make
+sudo make install
+```
+
+The `lrzsz-lite` fork includes important bug fixes and improvements for telnet-based transfers.
+
+Alternatively, install from system package manager (may have compatibility issues):
 ```bash
 # Ubuntu/Debian
 sudo apt install lrzsz ckermit
@@ -208,6 +230,12 @@ sudo dnf install lrzsz ckermit
 
 # Arch Linux
 sudo pacman -S lrzsz ckermit
+```
+
+**Configuration:** After installing lrzsz-lite, update `otelnet.conf`:
+```conf
+SEND_ZMODEM=/usr/local/bin/lsz      # Path to lrzsz-lite sz
+RECEIVE_ZMODEM=/usr/local/bin/lrz   # Path to lrzsz-lite rz
 ```
 
 ## Keyboard Shortcuts
